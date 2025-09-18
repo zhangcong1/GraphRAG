@@ -132,6 +132,12 @@ function generateD3WebviewContent(kg) {
         const nodes = ${JSON.stringify(nodesData)};
         const links = ${JSON.stringify(linksData)};
         
+        // 重要：只调用一次 acquireVsCodeApi，并保存引用
+        let vscode;
+        if (window.acquireVsCodeApi) {
+            vscode = window.acquireVsCodeApi();
+        }
+        
         const svg = d3.select('#graph');
         const width = window.innerWidth - 300;
         const height = window.innerHeight;
@@ -159,12 +165,14 @@ function generateD3WebviewContent(kg) {
             .attr('fill', d => d.group === 1 ? '#ff6b6b' : d.group === 2 ? '#4ecdc4' : '#45b7d1')
             .attr('stroke', '#fff')
             .attr('stroke-width', 2)
+            .style('cursor', d => (d.type === 'entity' || d.type === 'file') ? 'pointer' : 'default')
             .call(d3.drag()
                 .on('start', dragstarted)
                 .on('drag', dragged)
                 .on('end', dragended))
             .on('mouseover', showTooltip)
-            .on('mouseout', hideTooltip);
+            .on('mouseout', hideTooltip)
+            .on('click', handleNodeClick);
         
         simulation.on('tick', () => {
             link
@@ -185,7 +193,12 @@ function generateD3WebviewContent(kg) {
             if (d.path) content += '路径: ' + d.path + '<br>';
             if (d.type === 'entity' && d.properties) {
                 if (d.properties.element_type) content += '元素类型: ' + d.properties.element_type + '<br>';
-                if (d.properties.start_line) content += '行号: ' + d.properties.start_line + '-' + d.properties.end_line;
+                if (d.properties.start_line) content += '行号: ' + d.properties.start_line + '-' + d.properties.end_line + '<br>';
+            }
+            
+            // 添加点击提示
+            if (d.type === 'entity' || d.type === 'file') {
+                content += '<br><em style="color: #ffd700;">点击跳转到代码</em>';
             }
             
             // 修复tooltip位置，让它紧贴节点旁边
@@ -216,6 +229,57 @@ function generateD3WebviewContent(kg) {
         
         function hideTooltip() {
             d3.select('#tooltip').style('display', 'none');
+        }
+        
+        // 处理节点点击事件 - 直接跳转
+        function handleNodeClick(event, d) {
+            event.stopPropagation();
+            
+            // 只有代码实体和文件节点支持跳转
+            if (d.type === 'entity' || d.type === 'file') {
+                // 视觉反馈：高亮被点击的节点
+                node.attr('stroke', '#fff').attr('stroke-width', 2);
+                d3.select(event.currentTarget)
+                    .attr('stroke', '#ffd700')
+                    .attr('stroke-width', 4)
+                    .transition()
+                    .duration(800)
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 2);
+                
+                // 直接使用保存的 vscode 引用发送消息
+                if (vscode) {
+                    console.log('🚀 发送跳转消息:', {
+                        type: d.type,
+                        path: d.path,
+                        properties: d.properties,
+                        name: d.name
+                    });
+                    
+                    vscode.postMessage({
+                        command: 'navigateToCode',
+                        data: {
+                            type: d.type,
+                            path: d.path,
+                            properties: d.properties,
+                            name: d.name
+                        }
+                    });
+                } else {
+                    console.error('⚠️ VS Code API 不可用');
+                }
+            } else {
+                // 目录节点不支持跳转，显示提示
+                const tooltip = d3.select('#tooltip');
+                tooltip.style('display', 'block')
+                    .style('left', event.pageX + 10 + 'px')
+                    .style('top', event.pageY - 10 + 'px')
+                    .html('目录节点不支持跳转');
+                
+                setTimeout(() => {
+                    tooltip.style('display', 'none');
+                }, 1500);
+            }
         }
         
         function dragstarted(event, d) {

@@ -38,6 +38,12 @@
           "default": true,
           "description": "启用知识图谱向量化功能"
         },
+        "graphrag.vectorDatabaseType": {
+          "type": "string",
+          "enum": ["local", "milvus"],
+          "default": "local",
+          "description": "选择向量数据库类型：local(本地JSON文件) 或 milvus(Milvus向量数据库)"
+        },
         "graphrag.embeddingApiUrl": {
           "type": "string",
           "default": "http://10.30.235.27:46600",
@@ -62,6 +68,25 @@
           "type": "string",
           "default": "",
           "description": "Milvus 密码"
+        },
+        "graphrag.searchTopK": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "搜索返回的最大结果数量"
+        },
+        "graphrag.relationshipFilters": {
+          "type": "object",
+          "default": {
+            "enableContains": true,
+            "enableDefinedIn": true,
+            "enableImportsExports": false,
+            "enableCalls": false,
+            "enableSemanticRelated": false,
+            "minRelationWeight": 0.3
+          },
+          "description": "关系过滤配置，可以禁用某些类型的关系以减少图谱复杂度"
         },
         "graphrag.searchTopK": {
           "type": "number",

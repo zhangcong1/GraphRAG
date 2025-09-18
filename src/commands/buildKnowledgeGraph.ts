@@ -2,8 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { scanWorkspace, readFileContent, writeFileContent, ensureDirectory } from '../fsUtils';
 import { TreeSitterParser, CodeEntity } from '../parser';
-import { GraphBuilder } from '../graph';
+import { GraphBuilder, DEFAULT_RELATIONSHIP_FILTERS, RelationshipFilters } from '../graph';
 import { MilvusKnowledgeGraphVectorizer } from '../vectorization/MilvusKnowledgeGraphVectorizer';
+import { KnowledgeGraphVectorizer } from '../vectorization/KnowledgeGraphVectorizer';
 
 /**
  * 构建知识图谱命令处理器
@@ -86,8 +87,19 @@ export async function buildKnowledgeGraphCommand(): Promise<void> {
             
             progress.report({ increment: 70, message: '构建知识图谱...' });
             
-            // 4. 构建知识图谱
-            const graphBuilder = new GraphBuilder(workspacePath);
+            // 4. 获取关系过滤配置
+            const config = vscode.workspace.getConfiguration('graphrag');
+            const relationshipFilters: RelationshipFilters = {
+                enableContains: config.get('relationshipFilters.enableContains', DEFAULT_RELATIONSHIP_FILTERS.enableContains),
+                enableDefinedIn: config.get('relationshipFilters.enableDefinedIn', DEFAULT_RELATIONSHIP_FILTERS.enableDefinedIn),
+                enableImportsExports: config.get('relationshipFilters.enableImportsExports', DEFAULT_RELATIONSHIP_FILTERS.enableImportsExports),
+                enableCalls: config.get('relationshipFilters.enableCalls', DEFAULT_RELATIONSHIP_FILTERS.enableCalls),
+                enableSemanticRelated: config.get('relationshipFilters.enableSemanticRelated', DEFAULT_RELATIONSHIP_FILTERS.enableSemanticRelated),
+                minRelationWeight: config.get('relationshipFilters.minRelationWeight', DEFAULT_RELATIONSHIP_FILTERS.minRelationWeight)
+            };
+            
+            // 构建知识图谱
+            const graphBuilder = new GraphBuilder(workspacePath, relationshipFilters);
             const knowledgeGraph = graphBuilder.buildGraph(allEntities, fileImports, fileExports);
             
             progress.report({ increment: 90, message: '保存知识图谱...' });
@@ -111,23 +123,39 @@ export async function buildKnowledgeGraphCommand(): Promise<void> {
             await writeFileContent(summaryPath, JSON.stringify(summary, null, 2));
             
             // 6. 向量化知识图谱（可选）
-            const enableVectorization = vscode.workspace.getConfiguration('graphrag').get('enableVectorization', true);
+            const enableVectorization = config.get('enableVectorization', true);
+            const vectorDatabaseType = config.get<string>('vectorDatabaseType', 'local');
             let vectorizationResult = null;
             
             if (enableVectorization) {
                 try {
                     progress.report({ increment: 95, message: '向量化知识图谱...' });
                     
-                    const vectorizer = new MilvusKnowledgeGraphVectorizer(
-                        workspacePath, 
-                        {
-                            apiUrl: vscode.workspace.getConfiguration('graphrag').get('embeddingApiUrl', 'http://10.30.235.27:46600'),
-                            model: vscode.workspace.getConfiguration('graphrag').get('embeddingModel', 'Qwen3-Embedding-8B')
-                        },
-                        {
-                            address: vscode.workspace.getConfiguration('graphrag').get('milvusAddress', 'http://localhost:19530')
-                        }
-                    );
+                    const embeddingConfig = {
+                        apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
+                        model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
+                    };
+                    
+                    let vectorizer: any;
+                    
+                    if (vectorDatabaseType === 'milvus') {
+                        // 使用 Milvus 向量数据库
+                        vectorizer = new MilvusKnowledgeGraphVectorizer(
+                            workspacePath, 
+                            embeddingConfig,
+                            {
+                                address: config.get('milvusAddress', 'http://localhost:19530'),
+                                username: config.get('milvusUsername', ''),
+                                password: config.get('milvusPassword', '')
+                            }
+                        );
+                    } else {
+                        // 使用本地向量数据库
+                        vectorizer = new KnowledgeGraphVectorizer(
+                            workspacePath,
+                            embeddingConfig
+                        );
+                    }
                     
                     // 向量化所有节点
                     vectorizationResult = await vectorizer.vectorizeKnowledgeGraph(
@@ -189,11 +217,15 @@ export async function buildKnowledgeGraphCommand(): Promise<void> {
             if (vectorizationResult) {
                 message += `- 向量化节点: ${vectorizationResult.vectorizedNodes}/${vectorizationResult.totalNodes}\n`;
                 message += `- 向量维度: ${vectorizationResult.dimension}\n`;
+                message += `- 向量数据库: ${vectorDatabaseType}\n`;
             } else if (enableVectorization) {
                 message += `- 向量化: 已尝试但失败\n`;
             } else {
                 message += `- 向量化: 已禁用\n`;
             }
+            
+            // 添加关系过滤信息
+            message += `- 关系过滤: ${Object.values(relationshipFilters).filter(v => v === true).length}个类型启用\n`;
             
             message += `- 输出目录: .huima/\n` +
                 `- 主文件: kg.json\n` +

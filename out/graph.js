@@ -33,8 +33,19 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GraphBuilder = void 0;
+exports.GraphBuilder = exports.DEFAULT_RELATIONSHIP_FILTERS = void 0;
 const path = __importStar(require("path"));
+/**
+ * 默认关系过滤配置 - 只保留最基本的关系
+ */
+exports.DEFAULT_RELATIONSHIP_FILTERS = {
+    enableContains: true,
+    enableDefinedIn: true,
+    enableImportsExports: false,
+    enableCalls: false,
+    enableSemanticRelated: false,
+    minRelationWeight: 0.3
+};
 /**
  * 图构建器
  */
@@ -42,8 +53,10 @@ class GraphBuilder {
     nodes = new Map();
     edges = new Map();
     workspacePath;
-    constructor(workspacePath) {
+    relationshipFilters;
+    constructor(workspacePath, relationshipFilters) {
         this.workspacePath = workspacePath;
+        this.relationshipFilters = relationshipFilters || exports.DEFAULT_RELATIONSHIP_FILTERS;
     }
     /**
      * 从代码实体构建知识图谱
@@ -57,15 +70,25 @@ class GraphBuilder {
         // 2. 创建实体节点
         this.createEntityNodes(entities);
         // 3. 创建包含关系 (CONTAINS)
-        this.createContainsRelationships(entities);
+        if (this.relationshipFilters.enableContains) {
+            this.createContainsRelationships(entities);
+        }
         // 4. 创建定义关系 (DEFINED_IN)
-        this.createDefinedInRelationships(entities);
+        if (this.relationshipFilters.enableDefinedIn) {
+            this.createDefinedInRelationships(entities);
+        }
         // 5. 创建导入/导出关系
-        this.createImportExportRelationships(fileImports, fileExports);
+        if (this.relationshipFilters.enableImportsExports) {
+            this.createImportExportRelationships(fileImports, fileExports);
+        }
         // 6. 创建调用关系
-        this.createCallRelationships(entities);
+        if (this.relationshipFilters.enableCalls) {
+            this.createCallRelationships(entities);
+        }
         // 7. 创建语义关系
-        this.createSemanticRelationships(entities);
+        if (this.relationshipFilters.enableSemanticRelated) {
+            this.createSemanticRelationships(entities);
+        }
         // 8. 检测社区
         const communities = this.detectCommunities();
         return {
@@ -487,6 +510,10 @@ class GraphBuilder {
         return `entity:${relativePath}:${entity.element_type}:${entity.name}:${entity.start_line}`;
     }
     addEdge(source, target, relation, weight, properties = {}) {
+        // 检查权重过滤
+        if (weight < this.relationshipFilters.minRelationWeight) {
+            return; // 跳过权重过低的关系
+        }
         const edgeId = `${source}->${target}:${relation}`;
         // 避免重复边
         if (!this.edges.has(edgeId)) {

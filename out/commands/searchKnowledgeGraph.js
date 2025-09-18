@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.searchKnowledgeGraphCommand = searchKnowledgeGraphCommand;
 exports.batchSearchKnowledgeGraphCommand = batchSearchKnowledgeGraphCommand;
 const vscode = __importStar(require("vscode"));
-const KnowledgeGraphVectorizer_1 = require("../vectorization/KnowledgeGraphVectorizer");
+const MilvusKnowledgeGraphVectorizer_1 = require("../vectorization/MilvusKnowledgeGraphVectorizer");
 /**
  * 知识图谱向量搜索命令处理器
  */
@@ -49,9 +49,9 @@ async function searchKnowledgeGraphCommand() {
     const workspacePath = workspaceFolders[0].uri.fsPath;
     try {
         // 1. 检查是否存在向量数据库
-        const vectorizer = new KnowledgeGraphVectorizer_1.KnowledgeGraphVectorizer(workspacePath);
-        const stats = vectorizer.getVectorDBStats();
-        if (stats.totalCollections === 0) {
+        const vectorizer = new MilvusKnowledgeGraphVectorizer_1.MilvusKnowledgeGraphVectorizer(workspacePath);
+        const stats = await vectorizer.getVectorDBStats();
+        if (stats.totalDocuments === 0) {
             const result = await vscode.window.showWarningMessage('没有找到向量数据库，需要先构建知识图谱并启用向量化功能', '构建知识图谱');
             if (result === '构建知识图谱') {
                 const { buildKnowledgeGraphCommand } = await import('./buildKnowledgeGraph.js');
@@ -59,24 +59,11 @@ async function searchKnowledgeGraphCommand() {
             }
             return;
         }
-        // 2. 显示集合选择
-        const collectionNames = Object.keys(stats.collections);
-        let selectedCollection = 'knowledge_graph';
-        if (collectionNames.length > 1) {
-            const collectionItems = collectionNames.map(name => ({
-                label: name,
-                description: `${stats.collections[name].documents} 个文档`,
-                detail: `维度: ${stats.collections[name].dimension}`
-            }));
-            const selectedItem = await vscode.window.showQuickPick(collectionItems, {
-                title: '选择要搜索的知识图谱集合',
-                placeHolder: '选择集合...'
-            });
-            if (!selectedItem) {
-                return;
-            }
-            selectedCollection = selectedItem.label;
-        }
+        // 2. 检查是否有单个集合，或选择集合
+        let selectedCollection = vectorizer.getCollectionName('knowledge_graph');
+        // 简化处理，使用默认集合
+        console.log(`使用集合: ${selectedCollection}`);
+        console.log(`文档数量: ${stats.totalDocuments}`);
         // 3. 输入搜索查询
         const query = await vscode.window.showInputBox({
             title: '知识图谱向量搜索',
@@ -294,7 +281,7 @@ async function batchSearchKnowledgeGraphCommand() {
             vscode.window.showWarningMessage('请输入至少一个有效查询');
             return;
         }
-        const vectorizer = new KnowledgeGraphVectorizer_1.KnowledgeGraphVectorizer(workspacePath);
+        const vectorizer = new MilvusKnowledgeGraphVectorizer_1.MilvusKnowledgeGraphVectorizer(workspacePath);
         const results = [];
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,

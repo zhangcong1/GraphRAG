@@ -38,6 +38,7 @@ exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const buildKnowledgeGraph_1 = require("./commands/buildKnowledgeGraph");
 const showKnowledgeGraph_1 = require("./commands/showKnowledgeGraph");
+const searchKnowledgeGraph_1 = require("./commands/searchKnowledgeGraph");
 /**
  * 插件激活函数
  */
@@ -51,7 +52,15 @@ function activate(context) {
     const showCommand = vscode.commands.registerCommand('graphrag.showKnowledgeGraph', async () => {
         await (0, showKnowledgeGraph_1.showKnowledgeGraphCommand)();
     });
-    context.subscriptions.push(buildCommand, showCommand);
+    // 注册向量搜索命令
+    const searchCommand = vscode.commands.registerCommand('graphrag.searchKnowledgeGraph', async () => {
+        await (0, searchKnowledgeGraph_1.searchKnowledgeGraphCommand)();
+    });
+    // 注册批量搜索命令
+    const batchSearchCommand = vscode.commands.registerCommand('graphrag.batchSearchKnowledgeGraph', async () => {
+        await (0, searchKnowledgeGraph_1.batchSearchKnowledgeGraphCommand)();
+    });
+    context.subscriptions.push(buildCommand, showCommand, searchCommand, batchSearchCommand);
 }
 /**
  * 插件停用函数

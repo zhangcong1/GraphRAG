@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { buildKnowledgeGraphCommand } from './commands/buildKnowledgeGraph';
 import { showKnowledgeGraphCommand } from './commands/showKnowledgeGraph';
+import { searchKnowledgeGraphCommand, batchSearchKnowledgeGraphCommand } from './commands/searchKnowledgeGraph';
 
 /**
  * 插件激活函数
@@ -18,7 +19,17 @@ export function activate(context: vscode.ExtensionContext) {
         await showKnowledgeGraphCommand();
     });
 
-    context.subscriptions.push(buildCommand, showCommand);
+    // 注册向量搜索命令
+    const searchCommand = vscode.commands.registerCommand('graphrag.searchKnowledgeGraph', async () => {
+        await searchKnowledgeGraphCommand();
+    });
+
+    // 注册批量搜索命令
+    const batchSearchCommand = vscode.commands.registerCommand('graphrag.batchSearchKnowledgeGraph', async () => {
+        await batchSearchKnowledgeGraphCommand();
+    });
+
+    context.subscriptions.push(buildCommand, showCommand, searchCommand, batchSearchCommand);
 }
 
 /**

@@ -11,6 +11,14 @@ export interface EmbeddingResponse {
 }
 
 /**
+ * Embedding 向量接口
+ */
+export interface EmbeddingVector {
+    vector: number[];
+    dimension: number;
+}
+
+/**
  * Embedding 模型配置接口
  */
 export interface EmbeddingConfig {
@@ -19,13 +27,23 @@ export interface EmbeddingConfig {
     apiKey?: string;
     timeout?: number;
     maxTokens?: number;
+    maxBatchSize?: number;
 }
 
 /**
- * Embedding 服务类
+ * 进度回调接口
+ */
+export interface ProgressCallback {
+    (current: number, total: number, phase: string): void;
+}
+
+/**
+ * 改进的 Embedding 服务类
  */
 export class EmbeddingService {
     private config: EmbeddingConfig;
+    protected maxTokens: number;
+    private cachedDimension: number | null = null;
 
     constructor(config?: Partial<EmbeddingConfig>) {
         // 默认配置
@@ -34,14 +52,85 @@ export class EmbeddingService {
             model: 'Qwen3-Embedding-8B',
             timeout: 30000,
             maxTokens: 8192,
+            maxBatchSize: 20,
             ...config
+        };
+        this.maxTokens = this.config.maxTokens!;
+    }
+
+    /**
+     * 预处理文本以确保其有效
+     */
+    protected preprocessText(text: string): string {
+        // 空字符串替换为单个空格
+        if (text === '') {
+            return ' ';
+        }
+
+        // 简单的字符基础截断（近似值）
+        // 每个 token 平均约为4个字符
+        const maxChars = this.maxTokens * 4;
+        if (text.length > maxChars) {
+            return text.substring(0, maxChars);
+        }
+
+        return text;
+    }
+
+    /**
+     * 预处理文本数组
+     */
+    protected preprocessTexts(texts: string[]): string[] {
+        return texts.map(text => this.preprocessText(text));
+    }
+
+    /**
+     * 检测 embedding 维度
+     */
+    public async detectDimension(testText: string = 'test'): Promise<number> {
+        if (this.cachedDimension) {
+            return this.cachedDimension;
+        }
+
+        try {
+            const result = await this.embed(testText);
+            this.cachedDimension = result.dimension;
+            return this.cachedDimension;
+        } catch (error) {
+            console.warn('无法检测维度，使用默认值 128');
+            this.cachedDimension = 128;
+            return this.cachedDimension;
+        }
+    }
+
+    /**
+     * 生成单个文本的 embedding 向量
+     */
+    public async embed(text: string): Promise<EmbeddingVector> {
+        const processedText = this.preprocessText(text);
+        const embeddings = await this.getRealEmbeddings([processedText]);
+        
+        return {
+            vector: embeddings[0],
+            dimension: embeddings[0].length
         };
     }
 
     /**
-     * 获取文本的嵌入向量
-     * @param texts 文本数组
-     * @param useSimulation 是否使用模拟数据（用于测试）
+     * 批量生成 embedding 向量
+     */
+    public async embedBatch(texts: string[]): Promise<EmbeddingVector[]> {
+        const processedTexts = this.preprocessTexts(texts);
+        const embeddings = await this.getRealEmbeddings(processedTexts);
+        
+        return embeddings.map(vector => ({
+            vector,
+            dimension: vector.length
+        }));
+    }
+
+    /**
+     * 获取文本的嵌入向量（保持向后兼容）
      */
     async getEmbeddings(texts: string[], useSimulation = false): Promise<number[][]> {
         if (texts.length === 0) {
@@ -64,6 +153,53 @@ export class EmbeddingService {
             vscode.window.showWarningMessage(`Embedding API 调用失败，使用模拟数据: ${error}`);
             return this.getSimulatedEmbeddings(texts);
         }
+    }
+
+    /**
+     * 批量获取嵌入向量，支持进度回调
+     */
+    async getEmbeddingsWithProgress(
+        texts: string[], 
+        progressCallback?: ProgressCallback,
+        useSimulation = false
+    ): Promise<number[][]> {
+        if (texts.length === 0) {
+            return [];
+        }
+
+        const batchSize = this.config.maxBatchSize!;
+        const allEmbeddings: number[][] = [];
+        
+        for (let i = 0; i < texts.length; i += batchSize) {
+            const batch = texts.slice(i, i + batchSize);
+            
+            if (useSimulation) {
+                const batchEmbeddings = this.getSimulatedEmbeddings(batch);
+                allEmbeddings.push(...batchEmbeddings);
+            } else {
+                try {
+                    const batchEmbeddings = await this.getRealEmbeddings(batch);
+                    allEmbeddings.push(...batchEmbeddings);
+                } catch (error) {
+                    console.warn(`批次 ${i}-${i + batchSize} 处理失败，使用模拟数据:`, error);
+                    const batchEmbeddings = this.getSimulatedEmbeddings(batch);
+                    allEmbeddings.push(...batchEmbeddings);
+                }
+            }
+            
+            // 调用进度回调
+            const progress = Math.min(i + batchSize, texts.length);
+            if (progressCallback) {
+                progressCallback(progress, texts.length, `处理向量: ${progress}/${texts.length}`);
+            }
+            
+            // 避免API限流，添加小延迟
+            if (i + batchSize < texts.length && !useSimulation) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        
+        return allEmbeddings;
     }
 
     /**
@@ -189,49 +325,6 @@ export class EmbeddingService {
     }
 
     /**
-     * 批量获取嵌入向量，支持进度回调
-     */
-    async getEmbeddingsWithProgress(
-        texts: string[], 
-        progressCallback?: (progress: number, total: number) => void,
-        useSimulation = false
-    ): Promise<number[][]> {
-        if (texts.length === 0) {
-            return [];
-        }
-
-        const batchSize = 10;
-        const allEmbeddings: number[][] = [];
-        
-        for (let i = 0; i < texts.length; i += batchSize) {
-            const batch = texts.slice(i, i + batchSize);
-            
-            if (useSimulation) {
-                const batchEmbeddings = this.getSimulatedEmbeddings(batch);
-                allEmbeddings.push(...batchEmbeddings);
-            } else {
-                try {
-                    const endpoint = `${this.config.apiUrl}/v1/embeddings`;
-                    const batchEmbeddings = await this.processBatch(batch, endpoint);
-                    allEmbeddings.push(...batchEmbeddings);
-                } catch (error) {
-                    console.warn(`批次 ${i}-${i + batchSize} 处理失败，使用模拟数据:`, error);
-                    const batchEmbeddings = this.getSimulatedEmbeddings(batch);
-                    allEmbeddings.push(...batchEmbeddings);
-                }
-            }
-            
-            // 调用进度回调
-            const progress = Math.min(i + batchSize, texts.length);
-            if (progressCallback) {
-                progressCallback(progress, texts.length);
-            }
-        }
-        
-        return allEmbeddings;
-    }
-
-    /**
      * 测试 Embedding 服务连接
      */
     async testConnection(): Promise<boolean> {
@@ -257,5 +350,19 @@ export class EmbeddingService {
      */
     updateConfig(newConfig: Partial<EmbeddingConfig>): void {
         this.config = { ...this.config, ...newConfig };
+    }
+
+    /**
+     * 获取当前 embedding 维度
+     */
+    getDimension(): number {
+        return this.cachedDimension || 128;
+    }
+
+    /**
+     * 获取服务提供商名称
+     */
+    getProvider(): string {
+        return `Qwen3-Embedding (${this.config.apiUrl})`;
     }
 }

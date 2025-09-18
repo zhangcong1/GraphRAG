@@ -20,8 +20,65 @@
       {
         "command": "graphrag.showKnowledgeGraph",
         "title": "查看知识图谱"
+      },
+      {
+        "command": "graphrag.searchKnowledgeGraph",
+        "title": "搜索知识图谱"
+      },
+      {
+        "command": "graphrag.batchSearchKnowledgeGraph",
+        "title": "批量搜索知识图谱"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "GraphRAG 配置",
+      "properties": {
+        "graphrag.enableVectorization": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用知识图谱向量化功能"
+        },
+        "graphrag.embeddingApiUrl": {
+          "type": "string",
+          "default": "http://10.30.235.27:46600",
+          "description": "Embedding 模型 API 地址"
+        },
+        "graphrag.embeddingModel": {
+          "type": "string",
+          "default": "Qwen3-Embedding-8B",
+          "description": "Embedding 模型名称"
+        },
+        "graphrag.milvusAddress": {
+          "type": "string",
+          "default": "http://localhost:19530",
+          "description": "Milvus 向量数据库地址"
+        },
+        "graphrag.milvusUsername": {
+          "type": "string",
+          "default": "",
+          "description": "Milvus 用户名"
+        },
+        "graphrag.milvusPassword": {
+          "type": "string",
+          "default": "",
+          "description": "Milvus 密码"
+        },
+        "graphrag.searchTopK": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "搜索返回的最大结果数量"
+        },
+        "graphrag.searchThreshold": {
+          "type": "number",
+          "default": 0.5,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "搜索相似度阈值"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -38,7 +95,8 @@
     "tree-sitter-json": "^0.21.0",
     "@vue/compiler-sfc": "^3.3.8",
     "glob": "^10.3.10",
-    "d3": "^7.8.5"
+    "d3": "^7.8.5",
+    "@zilliz/milvus2-sdk-node": "^2.4.9"
   },
   "optionalDependencies": {
     "tree-sitter-vue": "^0.2.1",

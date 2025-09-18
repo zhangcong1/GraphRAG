@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { KnowledgeGraphVectorizer } from '../vectorization/KnowledgeGraphVectorizer';
+import { MilvusKnowledgeGraphVectorizer } from '../vectorization/MilvusKnowledgeGraphVectorizer';
 import { readFileContent } from '../fsUtils';
 
 /**
@@ -29,10 +29,10 @@ export async function searchKnowledgeGraphCommand(): Promise<void> {
     
     try {
         // 1. 检查是否存在向量数据库
-        const vectorizer = new KnowledgeGraphVectorizer(workspacePath);
-        const stats = vectorizer.getVectorDBStats();
+        const vectorizer = new MilvusKnowledgeGraphVectorizer(workspacePath);
+        const stats = await vectorizer.getVectorDBStats();
         
-        if (stats.totalCollections === 0) {
+        if (stats.totalDocuments === 0) {
             const result = await vscode.window.showWarningMessage(
                 '没有找到向量数据库，需要先构建知识图谱并启用向量化功能',
                 '构建知识图谱'
@@ -45,28 +45,12 @@ export async function searchKnowledgeGraphCommand(): Promise<void> {
             return;
         }
 
-        // 2. 显示集合选择
-        const collectionNames = Object.keys(stats.collections);
-        let selectedCollection = 'knowledge_graph';
+        // 2. 检查是否有单个集合，或选择集合
+        let selectedCollection = vectorizer.getCollectionName('knowledge_graph');
         
-        if (collectionNames.length > 1) {
-            const collectionItems = collectionNames.map(name => ({
-                label: name,
-                description: `${stats.collections[name].documents} 个文档`,
-                detail: `维度: ${stats.collections[name].dimension}`
-            }));
-            
-            const selectedItem = await vscode.window.showQuickPick(collectionItems, {
-                title: '选择要搜索的知识图谱集合',
-                placeHolder: '选择集合...'
-            });
-            
-            if (!selectedItem) {
-                return;
-            }
-            
-            selectedCollection = selectedItem.label;
-        }
+        // 简化处理，使用默认集合
+        console.log(`使用集合: ${selectedCollection}`);
+        console.log(`文档数量: ${stats.totalDocuments}`);
 
         // 3. 输入搜索查询
         const query = await vscode.window.showInputBox({
@@ -108,7 +92,7 @@ export async function searchKnowledgeGraphCommand(): Promise<void> {
                 }
 
                 // 5. 转换为快速选择项
-                const quickPickItems: SearchResultItem[] = searchResults.map((result, index) => {
+                const quickPickItems: SearchResultItem[] = searchResults.map((result: any, index: number) => {
                     const doc = result.document;
                     const metadata = doc.metadata;
                     
@@ -326,7 +310,7 @@ export async function batchSearchKnowledgeGraphCommand(): Promise<void> {
             return;
         }
 
-        const vectorizer = new KnowledgeGraphVectorizer(workspacePath);
+        const vectorizer = new MilvusKnowledgeGraphVectorizer(workspacePath);
         const results: Array<{ query: string; results: any[] }> = [];
 
         await vscode.window.withProgress({

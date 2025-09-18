@@ -1,42 +1,124 @@
-# 知识图谱向量化功能使用指南
+# 知识图谱向量化功能使用指南（Milvus 版本）
 
 ## 功能概述
 
-本插件为 GraphRAG 知识图谱添加了向量化功能，支持将知识图谱节点转换为向量表示并存储在本地向量数据库中，实现基于语义的代码搜索。
+本插件为 GraphRAG 知识图谱添加了基于 **Milvus 向量数据库**的向量化功能，支持将知识图谱节点转换为向量表示并存储在高性能的 Milvus 向量数据库中，实现基于语义的代码搜索。
 
-## 主要功能
+### 🆕 Milvus 版本优势
 
-### 1. 自动向量化
-- 在构建知识图谱时自动将代码节点向量化
-- 支持多种代码元素类型（函数、类、接口、变量等）
-- 生成语义化的向量表示
+- **高性能**：Milvus 专为向量搜索优化，支持 FAISS、Annoy 等多种索引算法
+- **可扩展性**：支持数十亿级向量数据，适合大型项目
+- **丰富功能**：支持混合搜索、过滤表达式、集合管理等高级功能
+- **生产就绪**：企业级稳定性和性能保障
+- **云原生**：支持分布式部署和云服务
 
-### 2. 本地向量数据库
-- 每个项目独立的向量数据库文件
-- 存储在项目的 `.huima/vector-database.json` 文件中
-- 支持多个集合（collection）管理
+## 环境准备
 
-### 3. 语义搜索
-- 基于向量相似性的代码搜索
-- 支持自然语言查询
-- 返回相关度排序的结果
+### 1. 安装 Milvus
 
-### 4. 批量搜索
-- 支持多个查询一次性执行
-- 生成搜索报告
-- 便于代码分析和理解
+#### 使用 Docker 运行 Milvus（推荐）
 
-## 使用方法
+```bash
+# 拉取 Milvus 镜像
+docker pull milvusdb/milvus:latest
 
-### 配置 Embedding 服务
+# 运行 Milvus Standalone
+docker run -d \
+  --name milvus-standalone \
+  -p 19530:19530 \
+  -p 9091:9091 \
+  -v $(pwd)/volumes/milvus:/var/lib/milvus \
+  milvusdb/milvus:latest
+```
 
-在 VS Code 设置中配置 Embedding 模型服务：
+#### 使用 Docker Compose（完整部署）
+
+```yaml
+# docker-compose.yml
+version: '3.5'
+
+services:
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9001:9001"
+      - "9000:9000"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.4.9
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+    - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+
+networks:
+  default:
+    name: milvus
+```
+
+```bash
+# 启动完整的 Milvus 集群
+docker-compose up -d
+```
+
+### 2. 配置插件
+
+在 VS Code 设置中配置：
 
 ```json
 {
   "graphrag.enableVectorization": true,
   "graphrag.embeddingApiUrl": "http://10.30.235.27:46600",
   "graphrag.embeddingModel": "Qwen3-Embedding-8B",
+  "graphrag.milvusAddress": "http://localhost:19530",
+  "graphrag.milvusUsername": "",
+  "graphrag.milvusPassword": "",
   "graphrag.searchTopK": 10,
   "graphrag.searchThreshold": 0.5
 }

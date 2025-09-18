@@ -7,5 +7,10 @@
 		"out": true // set this to false to include "out" folder in search results
 	},
 	// Turn off tsc task auto detection since we have the necessary tasks as npm scripts
-	"typescript.tsc.autoDetect": "off"
+	"typescript.tsc.autoDetect": "off",
+  "graphrag.enableVectorization": true,
+  "graphrag.embeddingApiUrl": "http://10.30.235.27:46600",
+  "graphrag.embeddingModel": "Qwen3-Embedding-8B",
+  "graphrag.searchTopK": 10,
+  "graphrag.searchThreshold": 0.5
 }

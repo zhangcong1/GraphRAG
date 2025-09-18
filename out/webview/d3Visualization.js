@@ -64,11 +64,15 @@ function generateD3WebviewContent(kg) {
         .tooltip { 
             position: absolute; 
             background: var(--vscode-panel-background); 
-            padding: 10px; 
+            padding: 8px 12px; 
             border: 1px solid var(--vscode-panel-border); 
-            border-radius: 4px; 
+            border-radius: 6px; 
             pointer-events: none;
             font-size: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            max-width: 250px;
+            z-index: 9999;
+            line-height: 1.4;
         }
         .stat-item {
             margin-bottom: 10px;
@@ -184,20 +188,24 @@ function generateD3WebviewContent(kg) {
                 if (d.properties.start_line) content += '行号: ' + d.properties.start_line + '-' + d.properties.end_line;
             }
             
-            // 修复tooltip位置，让它更接近节点
-            const rect = event.target.getBoundingClientRect();
-            const tooltipWidth = 250; // 预估tooltip宽度
-            const tooltipHeight = 100; // 预估tooltip高度
+            // 修复tooltip位置，让它紧贴节点旁边
+            const containerRect = document.querySelector('.main-content').getBoundingClientRect();
+            const tooltipWidth = 250;
+            const tooltipHeight = 100;
             
-            let left = event.clientX + 5;
-            let top = event.clientY - 5;
+            // 获取节点在视窗中的位置
+            let left = event.pageX + 10; // 节点右侧一点点距离
+            let top = event.pageY - 10;  // 节点上方一点点距离
             
-            // 防止tooltip超出视窗边界
-            if (left + tooltipWidth > window.innerWidth) {
-                left = event.clientX - tooltipWidth - 5;
+            // 防止tooltip超出容器边界
+            if (left + tooltipWidth > containerRect.right) {
+                left = event.pageX - tooltipWidth - 10; // 放在节点左侧
             }
             if (top + tooltipHeight > window.innerHeight) {
-                top = event.clientY - tooltipHeight - 5;
+                top = event.pageY - tooltipHeight - 10; // 放在节点下方
+            }
+            if (top < 0) {
+                top = event.pageY + 20; // 放在节点下方
             }
             
             tooltip.style('display', 'block')

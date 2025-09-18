@@ -35,7 +35,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TreeSitterParser = void 0;
 const path = __importStar(require("path"));
-const parsers_1 = require("./parsers");
+const JavaScriptParser_1 = require("./parsers/JavaScriptParser");
+const VueParser_1 = require("./parsers/VueParser");
+const LanguageParser_1 = require("./parsers/LanguageParser");
+const OtherFormatParser_1 = require("./parsers/OtherFormatParser");
 /**
  * Tree-sitter 解析器管理器（重构版本）
  */
@@ -64,10 +67,10 @@ class TreeSitterParser {
         try {
             // 初始化所有解析器
             this.parsers = [
-                new parsers_1.JavaScriptParser(),
-                new parsers_1.VueParser(),
-                new parsers_1.LanguageParser(),
-                new parsers_1.OtherFormatParser()
+                new JavaScriptParser_1.JavaScriptParser(),
+                new VueParser_1.VueParser(),
+                new LanguageParser_1.LanguageParser(),
+                new OtherFormatParser_1.OtherFormatParser()
             ];
             this.initialized = true;
             console.log(`🌳 解析器管理器初始化完成，支持多种语言格式`);
@@ -141,4 +144,4 @@ class TreeSitterParser {
     }
 }
 exports.TreeSitterParser = TreeSitterParser;
-//# sourceMappingURL=parser.js.map
+//# sourceMappingURL=parser_new.js.map

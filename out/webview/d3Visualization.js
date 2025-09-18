@@ -1,9 +1,10 @@
-import { KnowledgeGraph } from '../graph';
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.generateD3WebviewContent = generateD3WebviewContent;
 /**
  * 生成基于D3.js的可视化WebView内容
  */
-export function generateD3WebviewContent(kg: KnowledgeGraph): string {
+function generateD3WebviewContent(kg) {
     const nodesData = kg.nodes.map(n => ({
         id: n.id,
         name: n.name,
@@ -12,14 +13,12 @@ export function generateD3WebviewContent(kg: KnowledgeGraph): string {
         path: n.path || '',
         properties: n.properties
     }));
-    
     const linksData = kg.edges.map(e => ({
         source: e.source,
         target: e.target,
         value: e.weight,
         relation: e.relation
     }));
-
     return `<!DOCTYPE html>
 <html>
 <head>
@@ -256,3 +255,4 @@ export function generateD3WebviewContent(kg: KnowledgeGraph): string {
 </body>
 </html>`;
 }
+//# sourceMappingURL=d3Visualization.js.map

@@ -1,0 +1,62 @@
+{
+  "name": "graphrag-vscode",
+  "displayName": "GraphRAG Knowledge Graph",
+  "description": "基于 Tree-sitter 的前端代码知识图谱构建插件",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "graphrag.buildKnowledgeGraph",
+        "title": "构建知识图谱"
+      },
+      {
+        "command": "graphrag.showKnowledgeGraph",
+        "title": "查看知识图谱"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-javascript": "^0.21.4",
+    "tree-sitter-typescript": "^0.21.2",
+    "tree-sitter-json": "^0.21.0",
+    "@vue/compiler-sfc": "^3.3.8",
+    "glob": "^10.3.10",
+    "d3": "^7.8.5"
+  },
+  "optionalDependencies": {
+    "tree-sitter-vue": "^0.2.1",
+    "tree-sitter-python": "^0.21.0",
+    "tree-sitter-java": "^0.21.0",
+    "tree-sitter-go": "^0.21.1",
+    "tree-sitter-rust": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.104.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/glob": "^8.1.0",
+    "@typescript-eslint/eslint-plugin": "^8.42.0",
+    "@typescript-eslint/parser": "^8.42.0",
+    "eslint": "^9.34.0",
+    "typescript": "^5.9.2",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2"
+  }
+}

@@ -1,0 +1,1 @@
+{"version":3,"file":"indexCommand.d.ts","sourceRoot":"","sources":["../../src/commands/indexCommand.ts"],"names":[],"mappings":"AACA,OAAO,EAAE,OAAO,EAAE,MAAM,6BAA6B,CAAC;AAGtD,qBAAa,YAAY;IACrB,OAAO,CAAC,OAAO,CAAU;gBAEb,OAAO,EAAE,OAAO;IAI5B;;OAEG;IACH,aAAa,CAAC,OAAO,EAAE,OAAO,GAAG,IAAI;IAI/B,OAAO,IAAI,OAAO,CAAC,IAAI,CAAC;IAmHxB,UAAU,IAAI,OAAO,CAAC,IAAI,CAAC;CA0CpC"}

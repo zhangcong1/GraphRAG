@@ -1,0 +1,115 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.checkGraphStatusCommand = checkGraphStatusCommand;
+const vscode = __importStar(require("vscode"));
+const KnowledgeGraphVectorizer_1 = require("../vectorization/KnowledgeGraphVectorizer");
+/**
+ * 检查知识图谱状态命令处理器
+ */
+async function checkGraphStatusCommand() {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders) {
+        vscode.window.showErrorMessage('请先打开一个工作区');
+        return;
+    }
+    const workspacePath = workspaceFolders[0].uri.fsPath;
+    try {
+        // 检查向量数据库状态（主要状态来源）
+        const config = vscode.workspace.getConfiguration('graphrag');
+        const embeddingConfig = {
+            apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
+            model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
+        };
+        const vectorizer = new KnowledgeGraphVectorizer_1.KnowledgeGraphVectorizer(workspacePath, embeddingConfig);
+        let message = '📊 知识图谱状态检查\\n\\n';
+        // 检查是否有知识图谱向量数据
+        const hasVectorData = await vectorizer.hasKnowledgeGraph();
+        message += `💾 向量数据库状态:\\n`;
+        message += `  • 数据库类型: SQLite\\n`;
+        message += `  • 向量数据: ${hasVectorData ? '✅ 存在' : '❌ 不存在'}\\n`;
+        if (hasVectorData) {
+            const stats = await vectorizer.getVectorDBStats();
+            const collectionInfo = await vectorizer.getCollectionInfo('knowledge_graph');
+            message += `  • 总集合数: ${stats.totalCollections}\\n`;
+            message += `  • 总文档数: ${stats.totalDocuments}\\n`;
+            if (collectionInfo) {
+                message += `  • 知识图谱集合文档数: ${collectionInfo.documentCount}\\n`;
+                message += `  • 向量维度: ${collectionInfo.dimension}\\n`;
+                message += `  • 最后更新: ${collectionInfo.updated_at}\\n`;
+            }
+        }
+        await vectorizer.close();
+        // 检查配置状态
+        message += '\\n⚙️ 配置状态:\\n';
+        message += `  • 向量化启用: ${config.get('enableVectorization', true) ? '✅ 是' : '❌ 否'}\\n`;
+        message += `  • 自动更新启用: ${config.get('autoUpdateEnabled', false) ? '✅ 是' : '❌ 否'}\\n`;
+        message += `  • 搜索TopK: ${config.get('searchTopK', 10)}\\n`;
+        message += `  • 搜索阈值: ${config.get('searchThreshold', 0.5)}\\n`;
+        // 检查关系过滤配置
+        const relationshipFilters = config.get('relationshipFilters', {});
+        const enabledFilters = Object.entries(relationshipFilters).filter(([key, value]) => key.startsWith('enable') && value === true).length;
+        message += `  • 启用的关系类型: ${enabledFilters}\\n`;
+        // 显示结果
+        const actions = [];
+        if (!hasVectorData) {
+            actions.push('构建知识图谱');
+        }
+        else {
+            actions.push('重新构建');
+            actions.push('查看图谱');
+            actions.push('搜索功能');
+        }
+        const result = await vscode.window.showInformationMessage(message, { modal: false }, ...actions);
+        // 处理用户选择
+        if (result === '构建知识图谱' || result === '重新构建') {
+            const { buildKnowledgeGraphCommand } = await import('./buildKnowledgeGraph.js');
+            await buildKnowledgeGraphCommand();
+        }
+        else if (result === '查看图谱') {
+            const { showKnowledgeGraphCommand } = await import('./showKnowledgeGraph.js');
+            await showKnowledgeGraphCommand();
+        }
+        else if (result === '搜索功能') {
+            const { searchKnowledgeGraphCommand } = await import('./searchKnowledgeGraph.js');
+            await searchKnowledgeGraphCommand();
+        }
+    }
+    catch (error) {
+        console.error('检查知识图谱状态失败:', error);
+        vscode.window.showErrorMessage(`检查知识图谱状态失败: ${error}`);
+    }
+}
+//# sourceMappingURL=checkGraphStatus.js.map

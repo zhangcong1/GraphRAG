@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { MilvusKnowledgeGraphVectorizer } from '../vectorization/MilvusKnowledgeGraphVectorizer';
+import { KnowledgeGraphVectorizer } from '../vectorization/KnowledgeGraphVectorizer';
 import { readFileContent } from '../fsUtils';
 
 /**
@@ -29,10 +29,18 @@ export async function searchKnowledgeGraphCommand(): Promise<void> {
     
     try {
         // 1. 检查是否存在向量数据库
-        const vectorizer = new MilvusKnowledgeGraphVectorizer(workspacePath);
-        const stats = await vectorizer.getVectorDBStats();
+        const config = vscode.workspace.getConfiguration('graphrag');
+        const embeddingConfig = {
+            apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
+            model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
+        };
         
-        if (stats.totalDocuments === 0) {
+        const vectorizer = new KnowledgeGraphVectorizer(workspacePath, embeddingConfig);
+        
+        // 检查是否有知识图谱数据
+        const hasKnowledgeGraph = await vectorizer.hasKnowledgeGraph();
+        
+        if (!hasKnowledgeGraph) {
             const result = await vscode.window.showWarningMessage(
                 '没有找到向量数据库，需要先构建知识图谱并启用向量化功能',
                 '构建知识图谱'
@@ -44,9 +52,25 @@ export async function searchKnowledgeGraphCommand(): Promise<void> {
             }
             return;
         }
+        
+        const stats = await vectorizer.getVectorDBStats();
+        
+        if (stats.totalDocuments === 0) {
+            const result = await vscode.window.showWarningMessage(
+                '没有找到向量数据，需要先构建知识图谱并启用向量化功能',
+                '构建知识图谱'
+            );
+            
+            if (result === '构建知识图谱') {
+                const { buildKnowledgeGraphCommand } = await import('./buildKnowledgeGraph.js');
+                await buildKnowledgeGraphCommand();
+            }
+            await vectorizer.close();
+            return;
+        }
 
-        // 2. 检查是否有单个集合，或选择集合
-        let selectedCollection = vectorizer.getCollectionName('knowledge_graph');
+        // 2. 使用默认集合
+        const selectedCollection = 'knowledge_graph';
         
         // 简化处理，使用默认集合
         console.log(`使用集合: ${selectedCollection}`);
@@ -88,6 +112,7 @@ export async function searchKnowledgeGraphCommand(): Promise<void> {
 
                 if (searchResults.length === 0) {
                     vscode.window.showInformationMessage('没有找到相关的代码片段');
+                    await vectorizer.close();
                     return;
                 }
 
@@ -140,6 +165,9 @@ export async function searchKnowledgeGraphCommand(): Promise<void> {
                 if (selectedItem) {
                     await handleSearchResultSelection(selectedItem);
                 }
+                
+                // 关闭数据库连接
+                await vectorizer.close();
 
             } catch (error) {
                 console.error('向量搜索失败:', error);
@@ -310,7 +338,13 @@ export async function batchSearchKnowledgeGraphCommand(): Promise<void> {
             return;
         }
 
-        const vectorizer = new MilvusKnowledgeGraphVectorizer(workspacePath);
+        const config = vscode.workspace.getConfiguration('graphrag');
+        const embeddingConfig = {
+            apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
+            model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
+        };
+        
+        const vectorizer = new KnowledgeGraphVectorizer(workspacePath, embeddingConfig);
         const results: Array<{ query: string; results: any[] }> = [];
 
         await vscode.window.withProgress({

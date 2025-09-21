@@ -3,6 +3,186 @@ import * as path from 'path';
 import { readFileContent } from '../fsUtils';
 import { KnowledgeGraph } from '../graph';
 import { generateD3WebviewContent } from '../webview/d3Visualization';
+import { KnowledgeGraphVectorizer } from '../vectorization/KnowledgeGraphVectorizer';
+
+/**
+ * 从向量数据库重建知识图谱用于可视化
+ */
+async function buildKnowledgeGraphFromVectorDB(workspacePath: string): Promise<KnowledgeGraph | null> {
+    try {
+        const config = vscode.workspace.getConfiguration('graphrag');
+        const embeddingConfig = {
+            apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
+            model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
+        };
+        
+        const vectorizer = new KnowledgeGraphVectorizer(workspacePath, embeddingConfig);
+        
+        // 检查是否有向量数据
+        const hasVectorData = await vectorizer.hasKnowledgeGraph();
+        if (!hasVectorData) {
+            await vectorizer.close();
+            return null;
+        }
+        
+        // 从向量数据库中检索所有文档并重建知识图谱
+        const collectionInfo = await vectorizer.getCollectionInfo('knowledge_graph');
+        if (!collectionInfo) {
+            await vectorizer.close();
+            return null;
+        }
+        
+        // 获取统计信息
+        const stats = await vectorizer.getVectorDBStats();
+        
+        // 获取所有向量文档
+        const sqliteDB = (vectorizer as any).vectorDB; // 获取私有属性用于查询
+        await sqliteDB.initialize();
+        
+        // 查询所有文档
+        const documents = await new Promise<any[]>((resolve, reject) => {
+            sqliteDB.db!.all(
+                "SELECT id, vector, content, metadata FROM vector_documents WHERE collection_name = ?",
+                ['knowledge_graph'],
+                (err: Error | null, rows: any[]) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+        
+        await vectorizer.close();
+        
+        // 重建节点
+        const nodes: any[] = [];
+        const nodeIdSet = new Set<string>();
+        const nodeMap = new Map<string, any>();
+        
+        // 处理每个文档
+        for (const doc of documents) {
+            try {
+                const metadata = JSON.parse(doc.metadata);
+                const vector = JSON.parse(doc.vector);
+                
+                // 创建节点
+                const node: any = {
+                    id: doc.id,
+                    name: metadata.nodeId || doc.id,
+                    type: 'entity', // 默认类型
+                    properties: metadata
+                };
+                
+                // 根据元数据设置节点类型和属性
+                if (metadata.elementType) {
+                    node.type = 'entity';
+                    node.element_type = metadata.elementType;
+                } else if (metadata.fileName) {
+                    node.type = 'file';
+                    node.path = metadata.filePath;
+                }
+                
+                // 设置路径属性（用于代码跳转）
+                if (metadata.filePath) {
+                    node.path = metadata.filePath;
+                }
+                
+                // 添加行号信息（如果存在）
+                if (metadata.startLine !== undefined) {
+                    node.properties.start_line = metadata.startLine;
+                }
+                if (metadata.endLine !== undefined) {
+                    node.properties.end_line = metadata.endLine;
+                }
+                
+                nodes.push(node);
+                nodeIdSet.add(doc.id);
+                nodeMap.set(doc.id, node);
+            } catch (parseError) {
+                console.warn('解析文档元数据失败:', doc.id, parseError);
+            }
+        }
+        
+        // 为可视化创建简化的关系（基于节点类型和文件路径）
+        const edges: any[] = [];
+        const fileNodes = nodes.filter(n => n.type === 'file');
+        const entityNodes = nodes.filter(n => n.type === 'entity');
+        
+        // 创建文件到实体的关系
+        for (const entity of entityNodes) {
+            if (entity.path) {
+                const fileNode = fileNodes.find(f => f.path === entity.path);
+                if (fileNode) {
+                    edges.push({
+                        id: `edge_${entity.id}_${fileNode.id}`,
+                        source: fileNode.id,
+                        target: entity.id,
+                        relation: 'CONTAINS',
+                        weight: 1.0,
+                        properties: {}
+                    });
+                }
+            }
+        }
+        
+        // 创建相同文件中实体之间的关系
+        const entitiesByFile = new Map<string, any[]>();
+        for (const entity of entityNodes) {
+            if (entity.path) {
+                if (!entitiesByFile.has(entity.path)) {
+                    entitiesByFile.set(entity.path, []);
+                }
+                entitiesByFile.get(entity.path)!.push(entity);
+            }
+        }
+        
+        // 为同一文件中的实体创建关系
+        for (const [filePath, entities] of entitiesByFile.entries()) {
+            for (let i = 0; i < entities.length - 1; i++) {
+                for (let j = i + 1; j < entities.length; j++) {
+                    edges.push({
+                        id: `edge_${entities[i].id}_${entities[j].id}`,
+                        source: entities[i].id,
+                        target: entities[j].id,
+                        relation: 'RELATED_TO',
+                        weight: 0.5,
+                        properties: {
+                            same_file: true
+                        }
+                    });
+                }
+            }
+        }
+        
+        // 构建简化的知识图谱结构用于可视化
+        const knowledgeGraph: KnowledgeGraph = {
+            nodes: nodes,
+            edges: edges,
+            communities: [
+                {
+                    id: 'vector_community',
+                    nodes: Array.from(nodeIdSet),
+                    score: 1.0,
+                    description: '向量数据库社区',
+                    tags: ['vector', 'database', 'sqlite']
+                }
+            ],
+            metadata: {
+                version: '1.0.0',
+                created_at: collectionInfo?.created_at || new Date().toISOString(),
+                total_files: fileNodes.length,
+                total_entities: entityNodes.length,
+                total_relationships: edges.length,
+                workspace_path: workspacePath
+            } as any
+        };
+        
+        return knowledgeGraph;
+        
+    } catch (error) {
+        console.error('从向量数据库重建知识图谱失败:', error);
+        return null;
+    }
+}
 
 /**
  * 处理跳转到代码的消息
@@ -100,11 +280,29 @@ export async function showKnowledgeGraphCommand(): Promise<void> {
     }
 
     const workspacePath = workspaceFolders[0].uri.fsPath;
-    const kgPath = path.join(workspacePath, '.huima', 'kg.json');
     
     try {
-        const content = await readFileContent(kgPath);
-        const kg: KnowledgeGraph = JSON.parse(content);
+        // 先尝试从向量数据库重建知识图谱
+        let kg = await buildKnowledgeGraphFromVectorDB(workspacePath);
+        
+        if (!kg) {
+            const result = await vscode.window.showWarningMessage(
+                '没有找到向量数据库数据，是否要先构建知识图谱？',
+                '构建知识图谱',
+                '取消'
+            );
+            
+            if (result === '构建知识图谱') {
+                const { buildKnowledgeGraphCommand } = await import('./buildKnowledgeGraph.js');
+                await buildKnowledgeGraphCommand();
+                // 重新尝试加载
+                kg = await buildKnowledgeGraphFromVectorDB(workspacePath);
+            }
+            
+            if (!kg) {
+                return; // 仍然没有数据，退出
+            }
+        }
         
         // 创建并显示 WebView
         const panel = vscode.window.createWebviewPanel(

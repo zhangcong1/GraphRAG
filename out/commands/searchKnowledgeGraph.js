@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.searchKnowledgeGraphCommand = searchKnowledgeGraphCommand;
 exports.batchSearchKnowledgeGraphCommand = batchSearchKnowledgeGraphCommand;
 const vscode = __importStar(require("vscode"));
-const MilvusKnowledgeGraphVectorizer_1 = require("../vectorization/MilvusKnowledgeGraphVectorizer");
+const KnowledgeGraphVectorizer_1 = require("../vectorization/KnowledgeGraphVectorizer");
 /**
  * 知识图谱向量搜索命令处理器
  */
@@ -49,9 +49,15 @@ async function searchKnowledgeGraphCommand() {
     const workspacePath = workspaceFolders[0].uri.fsPath;
     try {
         // 1. 检查是否存在向量数据库
-        const vectorizer = new MilvusKnowledgeGraphVectorizer_1.MilvusKnowledgeGraphVectorizer(workspacePath);
-        const stats = await vectorizer.getVectorDBStats();
-        if (stats.totalDocuments === 0) {
+        const config = vscode.workspace.getConfiguration('graphrag');
+        const embeddingConfig = {
+            apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
+            model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
+        };
+        const vectorizer = new KnowledgeGraphVectorizer_1.KnowledgeGraphVectorizer(workspacePath, embeddingConfig);
+        // 检查是否有知识图谱数据
+        const hasKnowledgeGraph = await vectorizer.hasKnowledgeGraph();
+        if (!hasKnowledgeGraph) {
             const result = await vscode.window.showWarningMessage('没有找到向量数据库，需要先构建知识图谱并启用向量化功能', '构建知识图谱');
             if (result === '构建知识图谱') {
                 const { buildKnowledgeGraphCommand } = await import('./buildKnowledgeGraph.js');
@@ -59,8 +65,18 @@ async function searchKnowledgeGraphCommand() {
             }
             return;
         }
-        // 2. 检查是否有单个集合，或选择集合
-        let selectedCollection = vectorizer.getCollectionName('knowledge_graph');
+        const stats = await vectorizer.getVectorDBStats();
+        if (stats.totalDocuments === 0) {
+            const result = await vscode.window.showWarningMessage('没有找到向量数据，需要先构建知识图谱并启用向量化功能', '构建知识图谱');
+            if (result === '构建知识图谱') {
+                const { buildKnowledgeGraphCommand } = await import('./buildKnowledgeGraph.js');
+                await buildKnowledgeGraphCommand();
+            }
+            await vectorizer.close();
+            return;
+        }
+        // 2. 使用默认集合
+        const selectedCollection = 'knowledge_graph';
         // 简化处理，使用默认集合
         console.log(`使用集合: ${selectedCollection}`);
         console.log(`文档数量: ${stats.totalDocuments}`);
@@ -89,6 +105,7 @@ async function searchKnowledgeGraphCommand() {
                 progress.report({ increment: 80, message: '处理搜索结果...' });
                 if (searchResults.length === 0) {
                     vscode.window.showInformationMessage('没有找到相关的代码片段');
+                    await vectorizer.close();
                     return;
                 }
                 // 5. 转换为快速选择项
@@ -133,6 +150,8 @@ async function searchKnowledgeGraphCommand() {
                 if (selectedItem) {
                     await handleSearchResultSelection(selectedItem);
                 }
+                // 关闭数据库连接
+                await vectorizer.close();
             }
             catch (error) {
                 console.error('向量搜索失败:', error);
@@ -281,7 +300,12 @@ async function batchSearchKnowledgeGraphCommand() {
             vscode.window.showWarningMessage('请输入至少一个有效查询');
             return;
         }
-        const vectorizer = new MilvusKnowledgeGraphVectorizer_1.MilvusKnowledgeGraphVectorizer(workspacePath);
+        const config = vscode.workspace.getConfiguration('graphrag');
+        const embeddingConfig = {
+            apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
+            model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
+        };
+        const vectorizer = new KnowledgeGraphVectorizer_1.KnowledgeGraphVectorizer(workspacePath, embeddingConfig);
         const results = [];
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,

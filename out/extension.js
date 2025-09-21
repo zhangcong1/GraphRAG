@@ -39,6 +39,9 @@ const vscode = __importStar(require("vscode"));
 const buildKnowledgeGraph_1 = require("./commands/buildKnowledgeGraph");
 const showKnowledgeGraph_1 = require("./commands/showKnowledgeGraph");
 const searchKnowledgeGraph_1 = require("./commands/searchKnowledgeGraph");
+const checkGraphStatus_1 = require("./commands/checkGraphStatus");
+const exportKnowledgeGraph_1 = require("./commands/exportKnowledgeGraph");
+const fileWatcher_1 = require("./commands/fileWatcher");
 /**
  * 插件激活函数
  */
@@ -60,7 +63,24 @@ function activate(context) {
     const batchSearchCommand = vscode.commands.registerCommand('graphrag.batchSearchKnowledgeGraph', async () => {
         await (0, searchKnowledgeGraph_1.batchSearchKnowledgeGraphCommand)();
     });
-    context.subscriptions.push(buildCommand, showCommand, searchCommand, batchSearchCommand);
+    // 注册检查图谱状态命令
+    const checkStatusCommand = vscode.commands.registerCommand('graphrag.checkGraphStatus', async () => {
+        await (0, checkGraphStatus_1.checkGraphStatusCommand)();
+    });
+    // 注册导出知识图谱命令
+    const exportCommand = vscode.commands.registerCommand('graphrag.exportKnowledgeGraph', async () => {
+        await (0, exportKnowledgeGraph_1.exportKnowledgeGraphCommand)();
+    });
+    // 注册切换自动更新命令
+    const toggleAutoUpdateCmd = vscode.commands.registerCommand('graphrag.toggleAutoUpdate', async () => {
+        await (0, fileWatcher_1.toggleAutoUpdateCommand)();
+    });
+    // 添加所有命令到订阅列表
+    context.subscriptions.push(buildCommand, showCommand, searchCommand, batchSearchCommand, checkStatusCommand, exportCommand, toggleAutoUpdateCmd);
+    // 初始化文件监听器
+    (0, fileWatcher_1.initializeFileWatcher)(context).catch(error => {
+        console.error('初始化文件监听器失败:', error);
+    });
 }
 /**
  * 插件停用函数

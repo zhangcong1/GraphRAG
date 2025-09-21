@@ -1,5 +1,7 @@
 import { CodeEntity } from './parser';
 import * as path from 'path';
+import * as fs from 'fs';
+import { KnowledgeGraphJSON, KnowledgeGraphNode, KnowledgeGraphEdge, KnowledgeGraphCommunity, KnowledgeGraphMetadata, RelationType as SchemaRelationType } from './types/knowledgeGraphSchema';
 
 /**
  * 关系过滤配置
@@ -75,7 +77,7 @@ export interface Community {
 }
 
 /**
- * 知识图谱
+ * 知识图谱 (保持向后兼容)
  */
 export interface KnowledgeGraph {
     nodes: GraphNode[];
@@ -89,6 +91,14 @@ export interface KnowledgeGraph {
         total_relationships: number;
         workspace_path: string;
     };
+}
+
+/**
+ * 标准知识图谱JSON结构 (新增)
+ */
+export interface StandardKnowledgeGraph {
+    json: KnowledgeGraphJSON;
+    legacy: KnowledgeGraph;
 }
 
 /**
@@ -109,10 +119,104 @@ export class GraphBuilder {
      * 从代码实体构建知识图谱
      */
     public buildGraph(entities: CodeEntity[], fileImports: Map<string, string[]>, fileExports: Map<string, string[]>): KnowledgeGraph {
+        const result = this.buildStandardGraph(entities, fileImports, fileExports);
+        return result.legacy;
+    }
+
+    /**
+     * 构建标准知识图谱JSON结构
+     */
+    public buildStandardGraph(entities: CodeEntity[], fileImports: Map<string, string[]>, fileExports: Map<string, string[]>): StandardKnowledgeGraph {
         // 清空之前的数据
         this.nodes.clear();
         this.edges.clear();
 
+        // 构建标准JSON节点数组
+        const standardNodes: KnowledgeGraphNode[] = [];
+        const standardEdges: KnowledgeGraphEdge[] = [];
+        
+        // 1. 创建项目根节点
+        const projectNode = this.createProjectNode();
+        standardNodes.push(projectNode);
+
+        // 2. 创建文件和目录节点
+        const { fileNodes, directoryNodes } = this.createStandardFileAndDirectoryNodes(entities);
+        standardNodes.push(...directoryNodes, ...fileNodes);
+
+        // 3. 创建代码元素节点
+        const entityNodes = this.createStandardEntityNodes(entities);
+        standardNodes.push(...entityNodes);
+
+        // 4. 创建包含关系 (CONTAINS)
+        if (this.relationshipFilters.enableContains) {
+            const containsEdges = this.createStandardContainsRelationships(entities, projectNode.id, directoryNodes, fileNodes, entityNodes);
+            standardEdges.push(...containsEdges);
+        }
+
+        // 5. 创建定义关系 (DEFINED_IN)
+        if (this.relationshipFilters.enableDefinedIn) {
+            const definedInEdges = this.createStandardDefinedInRelationships(entityNodes, fileNodes);
+            standardEdges.push(...definedInEdges);
+        }
+
+        // 6. 创建导入/导出关系
+        if (this.relationshipFilters.enableImportsExports) {
+            const importExportEdges = this.createStandardImportExportRelationships(fileImports, fileExports, fileNodes);
+            standardEdges.push(...importExportEdges);
+        }
+
+        // 7. 创建调用关系
+        if (this.relationshipFilters.enableCalls) {
+            const callEdges = this.createStandardCallRelationships(entities, entityNodes);
+            standardEdges.push(...callEdges);
+        }
+
+        // 8. 创建语义关系
+        if (this.relationshipFilters.enableSemanticRelated) {
+            const semanticEdges = this.createStandardSemanticRelationships(entityNodes);
+            standardEdges.push(...semanticEdges);
+        }
+
+        // 9. 检测社区
+        const standardCommunities = this.detectStandardCommunities(standardNodes, standardEdges);
+
+        // 构建标准JSON结构
+        const standardJson: KnowledgeGraphJSON = {
+            metadata: this.createStandardMetadata(entities, standardNodes, standardEdges),
+            nodes: standardNodes,
+            edges: standardEdges,
+            communities: standardCommunities
+        };
+
+        // 构建传统格式（向后兼容）
+        this.buildLegacyNodesAndEdges(entities, fileImports, fileExports);
+        const legacyGraph: KnowledgeGraph = {
+            nodes: Array.from(this.nodes.values()),
+            edges: Array.from(this.edges.values()),
+            communities: this.detectCommunities(),
+            metadata: {
+                version: '1.0.0',
+                created_at: new Date().toISOString(),
+                total_files: this.countFileNodes(),
+                total_entities: entities.length,
+                total_relationships: this.edges.size,
+                workspace_path: this.workspacePath
+            }
+        };
+
+        // 保存标准JSON到文件
+        this.saveStandardGraphToFile(standardJson);
+
+        return {
+            json: standardJson,
+            legacy: legacyGraph
+        };
+    }
+
+    /**
+     * 构建传统格式（向后兼容）
+     */
+    private buildLegacyNodesAndEdges(entities: CodeEntity[], fileImports: Map<string, string[]>, fileExports: Map<string, string[]>): void {
         // 1. 创建文件和目录节点
         this.createFileAndDirectoryNodes(entities);
 
@@ -143,24 +247,557 @@ export class GraphBuilder {
         if (this.relationshipFilters.enableSemanticRelated) {
             this.createSemanticRelationships(entities);
         }
+    }
 
-        // 8. 检测社区
-        const communities = this.detectCommunities();
+    /**
+     * 保存标准知识图谱JSON到文件
+     */
+    private saveStandardGraphToFile(standardJson: KnowledgeGraphJSON): void {
+        try {
+            const outputPath = path.join(this.workspacePath, 'knowledge-graph.json');
+            const jsonContent = JSON.stringify(standardJson, null, 2);
+            fs.writeFileSync(outputPath, jsonContent, 'utf8');
+            console.log(`✅ 标准知识图谱JSON已保存到: ${outputPath}`);
+        } catch (error) {
+            console.error('保存标准知识图谱JSON失败:', error);
+        }
+    }
 
+    // 标准知识图谱构建方法
+
+    /**
+     * 创建项目根节点
+     */
+    private createProjectNode(): KnowledgeGraphNode {
+        const packageJsonPath = path.join(this.workspacePath, 'package.json');
+        let projectName = path.basename(this.workspacePath);
+        let techStack: string[] = [];
+        let packageJsonInfo: any = {};
+        
+        try {
+            if (fs.existsSync(packageJsonPath)) {
+                const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+                projectName = packageJson.name || projectName;
+                packageJsonInfo = {
+                    dependencies: packageJson.dependencies || {},
+                    devDependencies: packageJson.devDependencies || {},
+                    scripts: packageJson.scripts || {}
+                };
+                
+                // 推断技术栈
+                const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                if (deps.vue) techStack.push(deps.vue.startsWith('^3') || deps.vue.startsWith('3') ? 'vue3' : 'vue2');
+                if (deps.react) techStack.push('react');
+                if (deps.typescript) techStack.push('typescript');
+                if (deps['@types/node']) techStack.push('nodejs');
+                if (deps.next) techStack.push('nextjs');
+                if (deps.nuxt) techStack.push('nuxtjs');
+            }
+        } catch (error) {
+            console.warn('无法读取package.json:', error);
+        }
+        
         return {
-            nodes: Array.from(this.nodes.values()),
-            edges: Array.from(this.edges.values()),
-            communities,
-            metadata: {
-                version: '1.0.0',
-                created_at: new Date().toISOString(),
-                total_files: this.countFileNodes(),
-                total_entities: entities.length,
-                total_relationships: this.edges.size,
+            id: 'project_root',
+            type: 'project',
+            name: projectName,
+            absolute_path: this.workspacePath,
+            semantic_tags: ['project', 'root', ...techStack],
+            tech_stack: techStack,
+            properties: {
+                package_json: packageJsonInfo,
                 workspace_path: this.workspacePath
             }
         };
     }
+
+    /**
+     * 创建标准文件和目录节点
+     */
+    private createStandardFileAndDirectoryNodes(entities: CodeEntity[]): { fileNodes: KnowledgeGraphNode[], directoryNodes: KnowledgeGraphNode[] } {
+        const processedPaths = new Set<string>();
+        const fileNodes: KnowledgeGraphNode[] = [];
+        const directoryNodes: KnowledgeGraphNode[] = [];
+        const directorySet = new Set<string>();
+
+        for (const entity of entities) {
+            const filePath = entity.file_path;
+            
+            if (!processedPaths.has(filePath)) {
+                processedPaths.add(filePath);
+
+                // 创建文件节点
+                const fileName = path.basename(filePath);
+                const relativePath = path.relative(this.workspacePath, filePath);
+                const fileExtension = path.extname(filePath);
+                
+                // 获取文件统计信息
+                let fileSize = 0;
+                let lineCount = 0;
+                try {
+                    const stats = fs.statSync(filePath);
+                    fileSize = stats.size;
+                    const content = fs.readFileSync(filePath, 'utf8');
+                    lineCount = content.split('\n').length;
+                } catch (error) {
+                    console.warn(`无法获取文件统计信息: ${filePath}`);
+                }
+                
+                // 获取文件中的实体信息
+                const entitiesInFile = entities.filter(e => e.file_path === filePath);
+                const fileTypes = [...new Set(entitiesInFile.map(e => e.element_type))];
+                
+                const fileNode: KnowledgeGraphNode = {
+                    id: `file:${relativePath}`,
+                    type: 'file',
+                    name: fileName,
+                    absolute_path: filePath,
+                    relative_path: relativePath,
+                    file_type: this.getFileType(fileExtension),
+                    file_size: fileSize,
+                    line_count: lineCount,
+                    semantic_tags: this.generateFileSemanticTags(entity.language, fileTypes, fileName),
+                    properties: {
+                        extension: fileExtension,
+                        language: entity.language || 'unknown',
+                        entities_count: entitiesInFile.length,
+                        element_types: fileTypes
+                    }
+                };
+                
+                fileNodes.push(fileNode);
+
+                // 创建目录节点层次结构
+                this.createStandardDirectoryHierarchy(filePath, directoryNodes, directorySet);
+            }
+        }
+
+        return { fileNodes, directoryNodes };
+    }
+
+    /**
+     * 创建目录层次结构
+     */
+    private createStandardDirectoryHierarchy(filePath: string, directoryNodes: KnowledgeGraphNode[], directorySet: Set<string>): void {
+        const relativePath = path.relative(this.workspacePath, filePath);
+        const pathParts = path.dirname(relativePath).split(path.sep);
+
+        let currentPath = '';
+        for (let i = 0; i < pathParts.length; i++) {
+            if (pathParts[i] === '.' || pathParts[i] === '') continue;
+
+            currentPath = currentPath ? path.join(currentPath, pathParts[i]) : pathParts[i];
+            const dirId = `dir:${currentPath}`;
+
+            if (!directorySet.has(dirId)) {
+                directorySet.add(dirId);
+                
+                const absolutePath = path.join(this.workspacePath, currentPath);
+                
+                // 获取目录下的子目录和文件数量
+                let childrenCount = 0;
+                try {
+                    const children = fs.readdirSync(absolutePath);
+                    childrenCount = children.length;
+                } catch (error) {
+                    console.warn(`无法读取目录: ${absolutePath}`);
+                }
+                
+                const directoryNode: KnowledgeGraphNode = {
+                    id: dirId,
+                    type: 'directory',
+                    name: pathParts[i],
+                    absolute_path: absolutePath,
+                    relative_path: currentPath,
+                    level: i + 1,
+                    children_count: childrenCount,
+                    semantic_tags: this.generateDirectorySemanticTags(pathParts[i], currentPath),
+                    properties: {
+                        depth: i + 1,
+                        full_path: absolutePath
+                    }
+                };
+                
+                directoryNodes.push(directoryNode);
+            }
+        }
+    }
+
+    /**
+     * 创建标准代码元素节点
+     */
+    private createStandardEntityNodes(entities: CodeEntity[]): KnowledgeGraphNode[] {
+        const entityNodes: KnowledgeGraphNode[] = [];
+        
+        for (const entity of entities) {
+            const relativePath = path.relative(this.workspacePath, entity.file_path);
+            
+            const entityNode: KnowledgeGraphNode = {
+                id: `entity:${relativePath}:${entity.element_type}:${entity.name}:${entity.start_line}`,
+                type: 'code_element',
+                name: entity.name,
+                absolute_path: entity.file_path,
+                relative_path: relativePath,
+                start_line: entity.start_line,
+                end_line: entity.end_line,
+                element_type: this.mapElementType(entity.element_type),
+                code_snippet: entity.code_snippet,
+                semantic_tags: [...entity.semantic_tags],
+                properties: {
+                    language: entity.language,
+                    file_name: entity.file_name,
+                    code_length: entity.code_snippet ? entity.code_snippet.length : 0,
+                    line_count: entity.end_line && entity.start_line ? entity.end_line - entity.start_line + 1 : 1
+                }
+            };
+            
+            entityNodes.push(entityNode);
+        }
+        
+        return entityNodes;
+    }
+
+    /**
+     * 创建包含关系
+     */
+    private createStandardContainsRelationships(
+        entities: CodeEntity[],
+        projectId: string,
+        directoryNodes: KnowledgeGraphNode[],
+        fileNodes: KnowledgeGraphNode[],
+        entityNodes: KnowledgeGraphNode[]
+    ): KnowledgeGraphEdge[] {
+        const edges: KnowledgeGraphEdge[] = [];
+        let edgeId = 1;
+        
+        // 项目包含目录
+        const rootDirectories = directoryNodes.filter(dir => (dir.level || 0) === 1);
+        for (const rootDir of rootDirectories) {
+            edges.push({
+                id: `edge_${edgeId++}`,
+                source: projectId,
+                target: rootDir.id,
+                relation: 'CONTAINS',
+                weight: 1.0,
+                properties: {
+                    description: `项目包含目录 ${rootDir.name}`
+                }
+            });
+        }
+        
+        // 目录包含子目录
+        for (const dir of directoryNodes) {
+            const level = dir.level || 0;
+            if (level > 1) {
+                const parentPath = path.dirname(dir.relative_path!);
+                const parentDir = directoryNodes.find(d => d.relative_path === parentPath);
+                if (parentDir) {
+                    edges.push({
+                        id: `edge_${edgeId++}`,
+                        source: parentDir.id,
+                        target: dir.id,
+                        relation: 'CONTAINS',
+                        weight: 1.0,
+                        properties: {
+                            description: `目录 ${parentDir.name} 包含子目录 ${dir.name}`
+                        }
+                    });
+                }
+            }
+        }
+        
+        // 目录包含文件
+        for (const file of fileNodes) {
+            const dirPath = path.dirname(file.relative_path!);
+            if (dirPath !== '.') {
+                const parentDir = directoryNodes.find(d => d.relative_path === dirPath);
+                if (parentDir) {
+                    edges.push({
+                        id: `edge_${edgeId++}`,
+                        source: parentDir.id,
+                        target: file.id,
+                        relation: 'CONTAINS',
+                        weight: 1.0,
+                        properties: {
+                            description: `目录 ${parentDir.name} 包含文件 ${file.name}`
+                        }
+                    });
+                }
+            } else {
+                // 文件在项目根目录
+                edges.push({
+                    id: `edge_${edgeId++}`,
+                    source: projectId,
+                    target: file.id,
+                    relation: 'CONTAINS',
+                    weight: 1.0,
+                    properties: {
+                        description: `项目根目录包含文件 ${file.name}`
+                    }
+                });
+            }
+        }
+        
+        // 文件包含代码元素
+        for (const entity of entityNodes) {
+            const file = fileNodes.find(f => f.absolute_path === entity.absolute_path);
+            if (file) {
+                edges.push({
+                    id: `edge_${edgeId++}`,
+                    source: file.id,
+                    target: entity.id,
+                    relation: 'CONTAINS',
+                    weight: 1.0,
+                    properties: {
+                        description: `文件 ${file.name} 包含 ${entity.element_type} ${entity.name}`,
+                        line_number: entity.start_line
+                    }
+                });
+            }
+        }
+        
+        return edges;
+    }
+
+    /**
+     * 创建定义关系
+     */
+    private createStandardDefinedInRelationships(entityNodes: KnowledgeGraphNode[], fileNodes: KnowledgeGraphNode[]): KnowledgeGraphEdge[] {
+        const edges: KnowledgeGraphEdge[] = [];
+        let edgeId = 1000;
+        
+        for (const entity of entityNodes) {
+            const file = fileNodes.find(f => f.absolute_path === entity.absolute_path);
+            if (file) {
+                edges.push({
+                    id: `edge_${edgeId++}`,
+                    source: entity.id,
+                    target: file.id,
+                    relation: 'DEFINED_IN',
+                    weight: 1.0,
+                    properties: {
+                        description: `${entity.element_type} ${entity.name} 定义在文件 ${file.name} 中`,
+                        line_number: entity.start_line
+                    }
+                });
+            }
+        }
+        
+        return edges;
+    }
+
+    /**
+     * 创建导入/导出关系
+     */
+    private createStandardImportExportRelationships(
+        fileImports: Map<string, string[]>,
+        fileExports: Map<string, string[]>,
+        fileNodes: KnowledgeGraphNode[]
+    ): KnowledgeGraphEdge[] {
+        const edges: KnowledgeGraphEdge[] = [];
+        let edgeId = 2000;
+        
+        // 处理导入关系
+        for (const [filePath, imports] of fileImports.entries()) {
+            const sourceFile = fileNodes.find(f => f.absolute_path === filePath);
+            if (!sourceFile) continue;
+            
+            for (const importPath of imports) {
+                // 尝试解析导入路径
+                const resolvedPath = this.resolveImportPath(this.workspacePath, filePath, importPath);
+                if (resolvedPath) {
+                    const targetFile = fileNodes.find(f => f.absolute_path === resolvedPath);
+                    if (targetFile) {
+                        edges.push({
+                            id: `edge_${edgeId++}`,
+                            source: sourceFile.id,
+                            target: targetFile.id,
+                            relation: 'IMPORTS',
+                            weight: 1.0,
+                            properties: {
+                                description: `${sourceFile.name} 导入 ${targetFile.name}`,
+                                import_path: importPath,
+                                dependency_type: importPath.startsWith('.') ? 'import' : 'require'
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        
+        return edges;
+    }
+
+    /**
+     * 创建调用关系
+     */
+    private createStandardCallRelationships(entities: CodeEntity[], entityNodes: KnowledgeGraphNode[]): KnowledgeGraphEdge[] {
+        const edges: KnowledgeGraphEdge[] = [];
+        let edgeId = 3000;
+        
+        // 简化实现：基于代码片段中的函数调用模式
+        const functionEntities = entities.filter(e => e.element_type === 'function');
+        
+        // 在每个文件内部查找函数调用
+        for (const entity of entities) {
+            if (entity.element_type === 'function') {
+                const calledFunctions = this.extractFunctionCalls(entity.code_snippet);
+                
+                for (const calledName of calledFunctions) {
+                    // 查找被调用的函数
+                    const targetFunctions = this.findFunctionsByName(entities, calledName);
+                    
+                    for (const targetFunc of targetFunctions) {
+                        if (targetFunc.file_path !== entity.file_path || targetFunc.name !== entity.name) {
+                            const sourceNode = entityNodes.find(n => 
+                                n.absolute_path === entity.file_path && 
+                                n.name === entity.name &&
+                                n.start_line === entity.start_line
+                            );
+                            
+                            const targetNode = entityNodes.find(n => 
+                                n.absolute_path === targetFunc.file_path && 
+                                n.name === targetFunc.name &&
+                                n.start_line === targetFunc.start_line
+                            );
+                            
+                            if (sourceNode && targetNode) {
+                                edges.push({
+                                    id: `edge_${edgeId++}`,
+                                    source: sourceNode.id,
+                                    target: targetNode.id,
+                                    relation: 'CALLS',
+                                    weight: 1.0,
+                                    properties: {
+                                        description: `${entity.name} 调用 ${targetFunc.name}`,
+                                        call_name: calledName
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return edges;
+    }
+
+    /**
+     * 创建语义关系
+     */
+    private createStandardSemanticRelationships(entityNodes: KnowledgeGraphNode[]): KnowledgeGraphEdge[] {
+        const edges: KnowledgeGraphEdge[] = [];
+        let edgeId = 4000;
+        
+        // 基于语义标签创建关系
+        for (let i = 0; i < entityNodes.length; i++) {
+            for (let j = i + 1; j < entityNodes.length; j++) {
+                const entityA = entityNodes[i];
+                const entityB = entityNodes[j];
+                
+                // 跳过同一文件中的实体（避免过多关系）
+                if (entityA.absolute_path === entityB.absolute_path) {
+                    continue;
+                }
+                
+                const commonTags = this.getCommonTags(entityA.semantic_tags, entityB.semantic_tags);
+                if (commonTags.length >= 2) { // 至少有2个共同标签
+                    const similarity = commonTags.length / Math.max(entityA.semantic_tags.length, entityB.semantic_tags.length);
+                    
+                    if (similarity > 0.3) { // 相似度阈值
+                        edges.push({
+                            id: `edge_${edgeId++}`,
+                            source: entityA.id,
+                            target: entityB.id,
+                            relation: 'RELATED_TO',
+                            weight: similarity,
+                            properties: {
+                                description: `${entityA.name} 与 ${entityB.name} 在语义上相关`,
+                                similarity_score: similarity,
+                                common_tags: commonTags
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        
+        return edges;
+    }
+
+    /**
+     * 检测社区
+     */
+    private detectStandardCommunities(nodes: KnowledgeGraphNode[], edges: KnowledgeGraphEdge[]): KnowledgeGraphCommunity[] {
+        const communities: KnowledgeGraphCommunity[] = [];
+        
+        // 基于文件路径的社区检测
+        const pathGroups = new Map<string, KnowledgeGraphNode[]>();
+        
+        for (const node of nodes) {
+            if (node.type === 'code_element' && node.relative_path) {
+                const dir = path.dirname(node.relative_path);
+                if (!pathGroups.has(dir)) {
+                    pathGroups.set(dir, []);
+                }
+                pathGroups.get(dir)!.push(node);
+            }
+        }
+        
+        let communityId = 1;
+        for (const [dirPath, groupNodes] of pathGroups.entries()) {
+            if (groupNodes.length > 2) { // 至少3个节点组成社区
+                const tags = this.extractCommunityTags(groupNodes);
+                const primaryLanguage = this.getMostCommonLanguage(groupNodes);
+                
+                communities.push({
+                    id: `community_${communityId++}`,
+                    label: `${path.basename(dirPath)}模块`,
+                    description: `位于${dirPath}目录的功能模块`,
+                    nodes: groupNodes.map(n => n.id),
+                    score: this.calculateCommunityScore(groupNodes, edges),
+                    cohesion: 0.8,
+                    coupling: 0.3,
+                    tags,
+                    primary_language: primaryLanguage,
+                    functionality: this.inferFunctionality(dirPath, tags),
+                    detection_method: 'dependency_based',
+                    confidence: 0.8,
+                    level: 1,
+                    sub_communities: []
+                });
+            }
+        }
+        
+        return communities;
+    }
+
+    /**
+     * 创建元数据
+     */
+    private createStandardMetadata(
+        entities: CodeEntity[], 
+        nodes: KnowledgeGraphNode[], 
+        edges: KnowledgeGraphEdge[]
+    ): KnowledgeGraphMetadata {
+        const fileNodes = nodes.filter(n => n.type === 'file');
+        const entityNodes = nodes.filter(n => n.type === 'code_element');
+        
+        return {
+            version: "1.0.0",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            workspace_path: this.workspacePath,
+            total_files: fileNodes.length,
+            total_entities: entityNodes.length,
+            total_relationships: edges.length,
+            supported_languages: this.getUniqueLanguages(entities),
+            parsing_statistics: this.calculateParsingStatistics(entities, fileNodes.length)
+        };
+    }
+
+    // 传统方法（保持向后兼容）
 
     /**
      * 创建文件和目录节点
@@ -303,7 +940,7 @@ export class GraphBuilder {
             
             for (const importPath of imports) {
                 // 解析导入路径
-                const resolvedPath = this.resolveImportPath(filePath, importPath);
+                const resolvedPath = this.resolveImportPath(this.workspacePath, filePath, importPath);
                 if (resolvedPath) {
                     const targetFileId = this.getFileId(resolvedPath);
                     if (this.nodes.has(targetFileId)) {
@@ -495,9 +1132,9 @@ export class GraphBuilder {
                     communities.push({
                         id: `community_${communities.length + 1}`,
                         nodes: community,
-                        score: this.calculateCommunityScore(community),
+                        score: this.calculateCommunityScoreOld(community),
                         description: this.generateCommunityDescription(community),
-                        tags: this.extractCommunityTags(community)
+                        tags: this.extractCommunityTagsOld(community)
                     });
                 }
             }
@@ -556,7 +1193,7 @@ export class GraphBuilder {
     /**
      * 计算社区分数
      */
-    private calculateCommunityScore(nodeIds: string[]): number {
+    private calculateCommunityScoreOld(nodeIds: string[]): number {
         let internalEdges = 0;
         let externalEdges = 0;
 
@@ -603,7 +1240,7 @@ export class GraphBuilder {
     /**
      * 提取社区标签
      */
-    private extractCommunityTags(nodeIds: string[]): string[] {
+    private extractCommunityTagsOld(nodeIds: string[]): string[] {
         const tagCount = new Map<string, number>();
         
         for (const nodeId of nodeIds) {
@@ -658,8 +1295,7 @@ export class GraphBuilder {
         }
     }
 
-    private resolveImportPath(fromFile: string, importPath: string): string | null {
-        // 简化的路径解析逻辑
+    private resolveImportPath(workspacePath: string, fromFile: string, importPath: string): string | null {
         if (importPath.startsWith('.')) {
             // 相对路径
             const fromDir = path.dirname(fromFile);
@@ -669,7 +1305,7 @@ export class GraphBuilder {
             const extensions = ['.js', '.ts', '.vue', '.jsx', '.tsx'];
             for (const ext of extensions) {
                 const fullPath = resolvedPath + ext;
-                if (this.nodes.has(this.getFileId(fullPath))) {
+                if (fs.existsSync(fullPath)) {
                     return fullPath;
                 }
             }
@@ -677,7 +1313,7 @@ export class GraphBuilder {
             // 尝试 index 文件
             for (const ext of extensions) {
                 const indexPath = path.join(resolvedPath, 'index' + ext);
-                if (this.nodes.has(this.getFileId(indexPath))) {
+                if (fs.existsSync(indexPath)) {
                     return indexPath;
                 }
             }
@@ -784,5 +1420,185 @@ export class GraphBuilder {
 
     private countFileNodes(): number {
         return Array.from(this.nodes.values()).filter(node => node.type === 'file').length;
+    }
+
+    // 标准知识图谱辅助方法
+
+    private getFileType(extension: string): string {
+        const typeMap: Record<string, string> = {
+            '.js': 'javascript',
+            '.ts': 'typescript',
+            '.vue': 'vue',
+            '.jsx': 'jsx',
+            '.tsx': 'tsx',
+            '.json': 'json',
+            '.md': 'markdown',
+            '.css': 'css',
+            '.scss': 'scss',
+            '.html': 'html'
+        };
+        return typeMap[extension] || 'unknown';
+    }
+
+    private generateFileSemanticTags(language: string | undefined, elementTypes: string[], fileName: string): string[] {
+        const tags = ['file'];
+        if (language) tags.push(language);
+        tags.push(...elementTypes);
+        
+        // 基于文件名添加特殊标签
+        const lowerName = fileName.toLowerCase();
+        if (lowerName.includes('test')) tags.push('test');
+        if (lowerName.includes('spec')) tags.push('spec');
+        if (lowerName.includes('config')) tags.push('config');
+        if (lowerName.includes('util') || lowerName.includes('helper')) tags.push('utility');
+        if (lowerName.includes('component')) tags.push('component');
+        if (lowerName.includes('service')) tags.push('service');
+        if (lowerName.includes('store')) tags.push('store');
+        
+        return [...new Set(tags)];
+    }
+
+    private generateDirectorySemanticTags(dirName: string, fullPath: string): string[] {
+        const tags = ['directory'];
+        const lowerName = dirName.toLowerCase();
+        
+        if (lowerName.includes('component')) tags.push('components');
+        if (lowerName.includes('page') || lowerName.includes('view')) tags.push('pages');
+        if (lowerName.includes('util') || lowerName.includes('helper')) tags.push('utilities');
+        if (lowerName.includes('service') || lowerName.includes('api')) tags.push('services');
+        if (lowerName.includes('store') || lowerName.includes('state')) tags.push('state-management');
+        if (lowerName.includes('test') || lowerName.includes('spec')) tags.push('testing');
+        if (lowerName.includes('config')) tags.push('configuration');
+        if (lowerName.includes('asset') || lowerName.includes('static')) tags.push('assets');
+        if (lowerName.includes('doc')) tags.push('documentation');
+        
+        return tags;
+    }
+
+    private mapElementType(elementType: string): KnowledgeGraphNode['element_type'] {
+        const typeMap: Record<string, KnowledgeGraphNode['element_type']> = {
+            'function': 'function',
+            'class': 'class',
+            'variable': 'variable',
+            'component': 'component',
+            'interface': 'interface',
+            'type': 'type',
+            'constant': 'constant',
+            'method': 'method',
+            'property': 'property'
+        };
+        return typeMap[elementType] || 'function';
+    }
+
+    private extractCommunityTags(nodes: KnowledgeGraphNode[]): string[] {
+        const tagCount = new Map<string, number>();
+        
+        for (const node of nodes) {
+            for (const tag of node.semantic_tags) {
+                tagCount.set(tag, (tagCount.get(tag) || 0) + 1);
+            }
+        }
+
+        // 返回最常见的标签
+        return Array.from(tagCount.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([tag]) => tag);
+    }
+
+    private getMostCommonLanguage(nodes: KnowledgeGraphNode[]): string {
+        const languageCount = new Map<string, number>();
+        
+        for (const node of nodes) {
+            const language = node.properties?.language;
+            if (language && language !== 'unknown') {
+                languageCount.set(language, (languageCount.get(language) || 0) + 1);
+            }
+        }
+        
+        const mostCommon = Array.from(languageCount.entries())
+            .sort((a, b) => b[1] - a[1])[0];
+        
+        return mostCommon ? mostCommon[0] : 'unknown';
+    }
+
+    private calculateCommunityScore(nodes: KnowledgeGraphNode[], edges: KnowledgeGraphEdge[]): number {
+        const nodeIds = new Set(nodes.map(n => n.id));
+        let internalEdges = 0;
+        let externalEdges = 0;
+        
+        for (const edge of edges) {
+            const sourceInCommunity = nodeIds.has(edge.source);
+            const targetInCommunity = nodeIds.has(edge.target);
+            
+            if (sourceInCommunity && targetInCommunity) {
+                internalEdges++;
+            } else if (sourceInCommunity || targetInCommunity) {
+                externalEdges++;
+            }
+        }
+        
+        const totalEdges = internalEdges + externalEdges;
+        return totalEdges > 0 ? (internalEdges - externalEdges / 2) / totalEdges : 0;
+    }
+
+    private inferFunctionality(dirPath: string, tags: string[]): string[] {
+        const functionality: string[] = [];
+        const lowerPath = dirPath.toLowerCase();
+        
+        if (lowerPath.includes('component')) functionality.push('ui_components');
+        if (lowerPath.includes('page') || lowerPath.includes('view')) functionality.push('page_routing');
+        if (lowerPath.includes('service') || lowerPath.includes('api')) functionality.push('api_integration');
+        if (lowerPath.includes('store') || lowerPath.includes('state')) functionality.push('state_management');
+        if (lowerPath.includes('util') || lowerPath.includes('helper')) functionality.push('utilities');
+        if (lowerPath.includes('test')) functionality.push('testing');
+        if (lowerPath.includes('config')) functionality.push('configuration');
+        
+        // 基于标签推断功能
+        if (tags.includes('vue') || tags.includes('react')) functionality.push('frontend_framework');
+        if (tags.includes('function')) functionality.push('business_logic');
+        if (tags.includes('class')) functionality.push('object_oriented');
+        
+        return functionality.length > 0 ? functionality : ['general'];
+    }
+
+    private getUniqueLanguages(entities: CodeEntity[]): string[] {
+        const languages = new Set<string>();
+        for (const entity of entities) {
+            if (entity.language) {
+                languages.add(entity.language);
+            }
+        }
+        return Array.from(languages);
+    }
+
+    private calculateParsingStatistics(entities: CodeEntity[], totalFiles: number): KnowledgeGraphMetadata['parsing_statistics'] {
+        const stats = {
+            successful_files: totalFiles,
+            failed_files: 0,
+            parsed_functions: 0,
+            parsed_classes: 0,
+            parsed_variables: 0,
+            parsed_components: 0
+        };
+        
+        for (const entity of entities) {
+            switch (entity.element_type) {
+                case 'function':
+                    stats.parsed_functions++;
+                    break;
+                case 'class':
+                    stats.parsed_classes++;
+                    break;
+                case 'variable':
+                    stats.parsed_variables++;
+                    break;
+                case 'component':
+                    stats.parsed_components++;
+                    break;
+            }
+        }
+        
+        return stats;
     }
 }

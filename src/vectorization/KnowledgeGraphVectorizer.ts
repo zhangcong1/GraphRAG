@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { EmbeddingService } from '../embedding/EmbeddingService';
-import { LocalVectorDB, VectorDocument } from '../vectordb/LocalVectorDB';
+import { SQLiteVectorDB, VectorDocument } from '../vectordb/SQLiteVectorDB';
 
 /**
  * 知识图谱节点接口（来源于原有的图结构）
@@ -45,7 +45,7 @@ export interface VectorizationResult {
  */
 export class KnowledgeGraphVectorizer {
     private embeddingService: EmbeddingService;
-    private vectorDB: LocalVectorDB;
+    private vectorDB: SQLiteVectorDB;
     private config: VectorizationConfig;
 
     constructor(
@@ -54,7 +54,7 @@ export class KnowledgeGraphVectorizer {
         vectorizationConfig?: VectorizationConfig
     ) {
         this.embeddingService = new EmbeddingService(embeddingConfig);
-        this.vectorDB = new LocalVectorDB(projectPath);
+        this.vectorDB = new SQLiteVectorDB(projectPath);
         this.config = {
             useSimulation: false,
             batchSize: 10,
@@ -134,7 +134,7 @@ export class KnowledgeGraphVectorizer {
             result.dimension = embeddings[0].length;
 
             // 4. 创建向量集合
-            this.vectorDB.createCollection(collectionName, result.dimension);
+            await this.vectorDB.createCollection(collectionName, result.dimension);
 
             // 5. 准备向量文档
             progressCallback?.(0, validIndices.length, '准备向量文档...');
@@ -149,7 +149,7 @@ export class KnowledgeGraphVectorizer {
             // 6. 插入向量数据库
             progressCallback?.(0, vectorDocuments.length, '插入向量数据库...');
             
-            this.vectorDB.insert(collectionName, vectorDocuments);
+            await this.vectorDB.insert(collectionName, vectorDocuments);
             result.vectorizedNodes = vectorDocuments.length;
 
             console.log(`✅ 知识图谱向量化完成:`, result);
@@ -278,7 +278,7 @@ export class KnowledgeGraphVectorizer {
             }
             
             // 执行向量搜索
-            const searchResults = this.vectorDB.search(
+            const searchResults = await this.vectorDB.search(
                 collectionName, 
                 queryEmbeddings[0], 
                 options
@@ -297,15 +297,15 @@ export class KnowledgeGraphVectorizer {
     /**
      * 获取向量数据库统计信息
      */
-    getVectorDBStats() {
-        return this.vectorDB.getStats();
+    async getVectorDBStats() {
+        return await this.vectorDB.getStats();
     }
 
     /**
      * 获取集合信息
      */
-    getCollectionInfo(collectionName: string) {
-        return this.vectorDB.getCollectionInfo(collectionName);
+    async getCollectionInfo(collectionName: string) {
+        return await this.vectorDB.getCollectionInfo(collectionName);
     }
 
     /**
@@ -341,5 +341,19 @@ export class KnowledgeGraphVectorizer {
         console.log(`🎯 向量化指定文件的节点，文件数: ${filePaths.length}，节点数: ${fileNodes.length}`);
         
         return this.vectorizeKnowledgeGraph(fileNodes, collectionName);
+    }
+
+    /**
+     * 检查项目是否已有知识图谱向量数据
+     */
+    async hasKnowledgeGraph(): Promise<boolean> {
+        return await this.vectorDB.hasKnowledgeGraph();
+    }
+
+    /**
+     * 关闭数据库连接
+     */
+    async close(): Promise<void> {
+        return await this.vectorDB.close();
     }
 }

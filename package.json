@@ -26,6 +26,18 @@
         "title": "搜索知识图谱"
       },
       {
+        "command": "graphrag.exportKnowledgeGraph",
+        "title": "导出知识图谱JSON"
+      },
+      {
+        "command": "graphrag.checkGraphStatus",
+        "title": "检查图谱状态"
+      },
+      {
+        "command": "graphrag.toggleAutoUpdate",
+        "title": "切换自动更新"
+      },
+      {
         "command": "graphrag.batchSearchKnowledgeGraph",
         "title": "批量搜索知识图谱"
       }
@@ -40,9 +52,11 @@
         },
         "graphrag.vectorDatabaseType": {
           "type": "string",
-          "enum": ["local", "milvus"],
-          "default": "local",
-          "description": "选择向量数据库类型：local(本地JSON文件) 或 milvus(Milvus向量数据库)"
+          "enum": [
+            "sqlite"
+          ],
+          "default": "sqlite",
+          "description": "向量数据库类型：sqlite(本地SQLite数据库)"
         },
         "graphrag.embeddingApiUrl": {
           "type": "string",
@@ -54,20 +68,11 @@
           "default": "Qwen3-Embedding-8B",
           "description": "Embedding 模型名称"
         },
-        "graphrag.milvusAddress": {
-          "type": "string",
-          "default": "http://localhost:19530",
-          "description": "Milvus 向量数据库地址"
-        },
-        "graphrag.milvusUsername": {
-          "type": "string",
-          "default": "",
-          "description": "Milvus 用户名"
-        },
-        "graphrag.milvusPassword": {
-          "type": "string",
-          "default": "",
-          "description": "Milvus 密码"
+
+        "graphrag.autoUpdateEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用文件监听，自动更新知识图谱"
         },
         "graphrag.searchTopK": {
           "type": "number",
@@ -88,13 +93,6 @@
           },
           "description": "关系过滤配置，可以禁用某些类型的关系以减少图谱复杂度"
         },
-        "graphrag.searchTopK": {
-          "type": "number",
-          "default": 10,
-          "minimum": 1,
-          "maximum": 50,
-          "description": "搜索返回的最大结果数量"
-        },
         "graphrag.searchThreshold": {
           "type": "number",
           "default": 0.5,
@@ -114,32 +112,33 @@
     "test": "vscode-test"
   },
   "dependencies": {
+    "@types/sqlite3": "^3.1.11",
+    "@vue/compiler-sfc": "^3.3.8",
+    "d3": "^7.8.5",
+    "glob": "^10.3.10",
+    "sqlite3": "^5.1.7",
     "tree-sitter": "^0.21.1",
     "tree-sitter-javascript": "^0.21.4",
-    "tree-sitter-typescript": "^0.21.2",
     "tree-sitter-json": "^0.21.0",
-    "@vue/compiler-sfc": "^3.3.8",
-    "glob": "^10.3.10",
-    "d3": "^7.8.5",
-    "@zilliz/milvus2-sdk-node": "^2.4.9"
+    "tree-sitter-typescript": "^0.21.2"
   },
   "optionalDependencies": {
-    "tree-sitter-vue": "^0.2.1",
-    "tree-sitter-python": "^0.21.0",
-    "tree-sitter-java": "^0.21.0",
     "tree-sitter-go": "^0.21.1",
-    "tree-sitter-rust": "^0.21.2"
+    "tree-sitter-java": "^0.21.0",
+    "tree-sitter-python": "^0.21.0",
+    "tree-sitter-rust": "^0.21.2",
+    "tree-sitter-vue": "^0.2.1"
   },
   "devDependencies": {
-    "@types/vscode": "^1.104.0",
+    "@types/glob": "^8.1.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "@types/glob": "^8.1.0",
+    "@types/vscode": "^1.104.0",
     "@typescript-eslint/eslint-plugin": "^8.42.0",
     "@typescript-eslint/parser": "^8.42.0",
-    "eslint": "^9.34.0",
-    "typescript": "^5.9.2",
     "@vscode/test-cli": "^0.0.11",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.34.0",
+    "typescript": "^5.9.2"
   }
 }

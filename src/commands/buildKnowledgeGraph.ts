@@ -3,7 +3,6 @@ import * as path from 'path';
 import { scanWorkspace, readFileContent, writeFileContent, ensureDirectory } from '../fsUtils';
 import { TreeSitterParser, CodeEntity } from '../parser';
 import { GraphBuilder, DEFAULT_RELATIONSHIP_FILTERS, RelationshipFilters } from '../graph';
-import { MilvusKnowledgeGraphVectorizer } from '../vectorization/MilvusKnowledgeGraphVectorizer';
 import { KnowledgeGraphVectorizer } from '../vectorization/KnowledgeGraphVectorizer';
 
 /**
@@ -102,105 +101,45 @@ export async function buildKnowledgeGraphCommand(): Promise<void> {
             const graphBuilder = new GraphBuilder(workspacePath, relationshipFilters);
             const knowledgeGraph = graphBuilder.buildGraph(allEntities, fileImports, fileExports);
             
-            progress.report({ increment: 90, message: '保存知识图谱...' });
+            progress.report({ increment: 90, message: '向量化知识图谱...' });
             
-            // 5. 保存知识图谱到 .huima 目录
-            const huimaDir = path.join(workspacePath, '.huima');
-            await ensureDirectory(huimaDir);
-            const outputPath = path.join(huimaDir, 'kg.json');
-            const jsonContent = JSON.stringify(knowledgeGraph, null, 2);
-            await writeFileContent(outputPath, jsonContent);
-            
-            // 同时保存简化版本用于快速预览
-            const summaryPath = path.join(huimaDir, 'kg_summary.json');
-            const summary = {
-                metadata: knowledgeGraph.metadata,
-                node_count: knowledgeGraph.nodes.length,
-                edge_count: knowledgeGraph.edges.length,
-                community_count: knowledgeGraph.communities.length,
-                top_communities: knowledgeGraph.communities.slice(0, 5)
-            };
-            await writeFileContent(summaryPath, JSON.stringify(summary, null, 2));
-            
-            // 6. 向量化知识图谱（可选）
+            // 5. 直接进行向量化处理（必须执行）
             const enableVectorization = config.get('enableVectorization', true);
-            const vectorDatabaseType = config.get<string>('vectorDatabaseType', 'local');
             let vectorizationResult = null;
             
-            if (enableVectorization) {
-                try {
-                    progress.report({ increment: 95, message: '向量化知识图谱...' });
-                    
-                    const embeddingConfig = {
-                        apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
-                        model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
-                    };
-                    
-                    let vectorizer: any;
-                    
-                    if (vectorDatabaseType === 'milvus') {
-                        // 使用 Milvus 向量数据库
-                        vectorizer = new MilvusKnowledgeGraphVectorizer(
-                            workspacePath, 
-                            embeddingConfig,
-                            {
-                                address: config.get('milvusAddress', 'http://localhost:19530'),
-                                username: config.get('milvusUsername', ''),
-                                password: config.get('milvusPassword', '')
-                            }
-                        );
-                    } else {
-                        // 使用本地向量数据库
-                        vectorizer = new KnowledgeGraphVectorizer(
-                            workspacePath,
-                            embeddingConfig
-                        );
-                    }
-                    
-                    // 向量化所有节点
-                    vectorizationResult = await vectorizer.vectorizeKnowledgeGraph(
-                        knowledgeGraph.nodes,
-                        undefined,
-                        (progress: number, total: number, message: string) => {
-                            console.log(`向量化进度: ${progress}/${total} - ${message}`);
-                        }
-                    );
-                    
-                    console.log('✅ 知识图谱向量化完成:', vectorizationResult);
-                    
-                    // 更新知识图谱，添加向量化信息
-                    (knowledgeGraph.metadata as any).vectorization = {
-                        enabled: true,
-                        totalNodes: vectorizationResult.totalNodes,
-                        vectorizedNodes: vectorizationResult.vectorizedNodes,
-                        skippedNodes: vectorizationResult.skippedNodes,
-                        dimension: vectorizationResult.dimension,
-                        collectionName: vectorizationResult.collectionName,
-                        vectorizedAt: new Date().toISOString()
-                    };
-                    
-                    // 重新保存包含向量化信息的知识图谱
-                    await writeFileContent(outputPath, JSON.stringify(knowledgeGraph, null, 2));
-                    
-                } catch (vectorError) {
-                    console.warn('向量化失败，但知识图谱构建成功:', vectorError);
-                    vscode.window.showWarningMessage(`向量化失败: ${vectorError}`);
-                    
-                    // 即使向量化失败，也要记录状态
-                    (knowledgeGraph.metadata as any).vectorization = {
-                        enabled: false,
-                        error: vectorError instanceof Error ? vectorError.message : String(vectorError),
-                        attemptedAt: new Date().toISOString()
-                    };
-                    await writeFileContent(outputPath, JSON.stringify(knowledgeGraph, null, 2));
-                }
-            } else {
-                console.log('⏭️ 向量化功能已禁用');
-                (knowledgeGraph.metadata as any).vectorization = {
-                    enabled: false,
-                    reason: 'disabled_by_configuration'
+            // 必须执行向量化，不再是可选项
+            try {
+                progress.report({ increment: 95, message: '向量化知识图谱...' });
+                
+                const embeddingConfig = {
+                    apiUrl: config.get('embeddingApiUrl', 'http://10.30.235.27:46600'),
+                    model: config.get('embeddingModel', 'Qwen3-Embedding-8B')
                 };
-                await writeFileContent(outputPath, JSON.stringify(knowledgeGraph, null, 2));
+                
+                // 使用 SQLite 向量数据库
+                const vectorizer = new KnowledgeGraphVectorizer(
+                    workspacePath,
+                    embeddingConfig
+                );
+                
+                // 向量化所有节点
+                vectorizationResult = await vectorizer.vectorizeKnowledgeGraph(
+                    knowledgeGraph.nodes,
+                    'knowledge_graph',
+                    (progress: number, total: number, message: string) => {
+                        console.log(`向量化进度: ${progress}/${total} - ${message}`);
+                    }
+                );
+                
+                console.log('✅ 知识图谱向量化完成:', vectorizationResult);
+                
+                // 关闭数据库连接
+                await vectorizer.close();
+                
+            } catch (vectorError) {
+                console.error('向量化失败:', vectorError);
+                vscode.window.showErrorMessage(`向量化失败: ${vectorError}`);
+                throw vectorError; // 向量化失败时直接抛出错误
             }
             
             progress.report({ increment: 100, message: '完成!' });
@@ -217,33 +156,30 @@ export async function buildKnowledgeGraphCommand(): Promise<void> {
             if (vectorizationResult) {
                 message += `- 向量化节点: ${vectorizationResult.vectorizedNodes}/${vectorizationResult.totalNodes}\n`;
                 message += `- 向量维度: ${vectorizationResult.dimension}\n`;
-                message += `- 向量数据库: ${vectorDatabaseType}\n`;
-            } else if (enableVectorization) {
-                message += `- 向量化: 已尝试但失败\n`;
+                message += `- 数据库: SQLite\n`;
             } else {
-                message += `- 向量化: 已禁用\n`;
+                message += `- 向量化: 失败\n`;
             }
             
             // 添加关系过滤信息
             message += `- 关系过滤: ${Object.values(relationshipFilters).filter(v => v === true).length}个类型启用\n`;
             
-            message += `- 输出目录: .huima/\n` +
-                `- 主文件: kg.json\n` +
-                `- 摘要文件: kg_summary.json`;
+            message += `- 数据存储: SQLite向量数据库`;
             
             const result = await vscode.window.showInformationMessage(
                 message,
-                '打开文件',
-                '查看图谱'
+                '查看图谱',
+                '搜索功能'
             );
             
-            if (result === '打开文件') {
-                const document = await vscode.workspace.openTextDocument(outputPath);
-                await vscode.window.showTextDocument(document);
-            } else if (result === '查看图谱') {
+            if (result === '查看图谱') {
                 // 动态导入避免循环依赖
                 const { showKnowledgeGraphCommand } = await import('./showKnowledgeGraph.js');
                 await showKnowledgeGraphCommand();
+            } else if (result === '搜索功能') {
+                // 动态导入避免循环依赖
+                const { searchKnowledgeGraphCommand } = await import('./searchKnowledgeGraph.js');
+                await searchKnowledgeGraphCommand();
             }
             
         } catch (error) {

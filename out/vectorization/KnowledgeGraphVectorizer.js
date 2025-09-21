@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.KnowledgeGraphVectorizer = void 0;
 const EmbeddingService_1 = require("../embedding/EmbeddingService");
-const LocalVectorDB_1 = require("../vectordb/LocalVectorDB");
+const SQLiteVectorDB_1 = require("../vectordb/SQLiteVectorDB");
 /**
  * 知识图谱向量化器类
  */
@@ -12,7 +12,7 @@ class KnowledgeGraphVectorizer {
     config;
     constructor(projectPath, embeddingConfig, vectorizationConfig) {
         this.embeddingService = new EmbeddingService_1.EmbeddingService(embeddingConfig);
-        this.vectorDB = new LocalVectorDB_1.LocalVectorDB(projectPath);
+        this.vectorDB = new SQLiteVectorDB_1.SQLiteVectorDB(projectPath);
         this.config = {
             useSimulation: false,
             batchSize: 10,
@@ -73,7 +73,7 @@ class KnowledgeGraphVectorizer {
             // 更新维度信息
             result.dimension = embeddings[0].length;
             // 4. 创建向量集合
-            this.vectorDB.createCollection(collectionName, result.dimension);
+            await this.vectorDB.createCollection(collectionName, result.dimension);
             // 5. 准备向量文档
             progressCallback?.(0, validIndices.length, '准备向量文档...');
             const vectorDocuments = validIndices.map((nodeIndex, embeddingIndex) => {
@@ -83,7 +83,7 @@ class KnowledgeGraphVectorizer {
             });
             // 6. 插入向量数据库
             progressCallback?.(0, vectorDocuments.length, '插入向量数据库...');
-            this.vectorDB.insert(collectionName, vectorDocuments);
+            await this.vectorDB.insert(collectionName, vectorDocuments);
             result.vectorizedNodes = vectorDocuments.length;
             console.log(`✅ 知识图谱向量化完成:`, result);
             return result;
@@ -182,7 +182,7 @@ class KnowledgeGraphVectorizer {
                 throw new Error('无法获取查询文本的向量表示');
             }
             // 执行向量搜索
-            const searchResults = this.vectorDB.search(collectionName, queryEmbeddings[0], options);
+            const searchResults = await this.vectorDB.search(collectionName, queryEmbeddings[0], options);
             console.log(`✅ 找到 ${searchResults.length} 个相似节点`);
             return searchResults;
         }
@@ -194,14 +194,14 @@ class KnowledgeGraphVectorizer {
     /**
      * 获取向量数据库统计信息
      */
-    getVectorDBStats() {
-        return this.vectorDB.getStats();
+    async getVectorDBStats() {
+        return await this.vectorDB.getStats();
     }
     /**
      * 获取集合信息
      */
-    getCollectionInfo(collectionName) {
-        return this.vectorDB.getCollectionInfo(collectionName);
+    async getCollectionInfo(collectionName) {
+        return await this.vectorDB.getCollectionInfo(collectionName);
     }
     /**
      * 测试嵌入服务连接
@@ -226,6 +226,18 @@ class KnowledgeGraphVectorizer {
         const fileNodes = nodes.filter(node => node.file_path && filePaths.includes(node.file_path));
         console.log(`🎯 向量化指定文件的节点，文件数: ${filePaths.length}，节点数: ${fileNodes.length}`);
         return this.vectorizeKnowledgeGraph(fileNodes, collectionName);
+    }
+    /**
+     * 检查项目是否已有知识图谱向量数据
+     */
+    async hasKnowledgeGraph() {
+        return await this.vectorDB.hasKnowledgeGraph();
+    }
+    /**
+     * 关闭数据库连接
+     */
+    async close() {
+        return await this.vectorDB.close();
     }
 }
 exports.KnowledgeGraphVectorizer = KnowledgeGraphVectorizer;
